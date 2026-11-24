@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+[ -z "${IPKG_INSTROOT:-}" ] || exit 0
+for cache in /tmp/luci-indexcache /tmp/luci-indexcache.*; do
+	[ ! -f "$cache" ] || rm -f "$cache"
+done
+/etc/init.d/rpcd reload || true
+if [ -f /etc/fsd-package/active ]; then
+	/etc/init.d/fsd-service enable
+	/etc/init.d/fsd-service restart
+else
+	/etc/init.d/fsd-service disable || true
+	echo 'FSD installed without changing DNS or firewall. Run fsd-setup check, then fsd-setup enable.'
+fi

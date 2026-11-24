@@ -1,0 +1,17 @@
+version: 1
+dns:
+  - name: fsd-install.home.arpa
+    ip: ap
+h2_site:
+  domain: fsd-install.home.arpa
+dns_blacklist:
+  block: []
+  allow: []
+h2_routes:
+  - path: /api/demo
+    json: '{"ok":true,"message":"FSD deployment check"}'
+
+# all: every LAN client; selected: list every IPv4/IPv6 address of the target devices.
+device_scope:
+  mode: all
+  addresses: []

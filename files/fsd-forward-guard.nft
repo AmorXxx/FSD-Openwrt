@@ -1,0 +1,16 @@
+# Included inside inet fw4 at boot, before the LAN and SIM links come up.
+set fsd_forward_ready {
+	type ifname
+	flags timeout
+}
+
+chain fsd_forward_guard {
+	type filter hook forward priority -20; policy accept;
+	iifname "br-lan" oifname != "br-lan" iifname @fsd_forward_ready return
+	iifname "br-lan" oifname != "br-lan" counter drop
+}
+
+# Default all-device scope; fsd-setup generates selected-device rules from YAML.
+set fsd_devices4 { type ipv4_addr; }
+set fsd_devices6 { type ipv6_addr; }
+chain fsd_dns_bypass { type nat hook prerouting priority -110; policy accept; }

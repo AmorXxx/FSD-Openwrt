@@ -1,0 +1,6 @@
+#!/bin/sh
+[ -z "${IPKG_INSTROOT:-}" ] || exit 0
+for cache in /tmp/luci-indexcache /tmp/luci-indexcache.*; do
+	[ ! -f "$cache" ] || rm -f "$cache"
+done
+/etc/init.d/rpcd reload || true

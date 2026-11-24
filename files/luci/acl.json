@@ -1,0 +1,31 @@
+{
+  "luci-app-fsd": {
+    "description": "Manage FSD on this router",
+    "read": {
+      "ubus": {
+        "fsd": [
+          "status",
+          "config",
+          "monitor",
+          "probe",
+          "bench",
+          "checks",
+          "validate",
+          "editor",
+          "profiles"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "fsd": [
+          "apply",
+          "block",
+          "monitor_control",
+          "save_editor",
+          "profile_action"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,172 @@
+#!/bin/sh
+# Installation itself does not change router networking. This command activates it.
+set -eu
+umask 077
+state=/etc/fsd-package
+data=/etc/fsd
+guard=/etc/nftables.d/45-fsd-forward-guard.nft
+share=/usr/share/fsd
+action=${1:-status}
+
+fail() { echo "FSD: $*" >&2; exit 1; }
+changed() { [ -z "$(uci changes "$1")" ] || fail "Uncommitted UCI changes: $1"; }
+clear_cache() {
+	for cache in /tmp/luci-indexcache /tmp/luci-indexcache.*; do
+		[ ! -f "$cache" ] || rm -f "$cache"
+	done
+}
+restore() {
+	/etc/init.d/fsd-service stop || true
+	/etc/init.d/fsd-service disable || true
+	rm -f "$state/active" "$guard"
+	for cfg in dhcp firewall uhttpd; do
+		uci revert "$cfg" || true
+		cp -p "$state/baseline/$cfg" "/etc/config/$cfg"
+	done
+	/etc/init.d/firewall restart
+	/etc/init.d/dnsmasq restart
+	/etc/init.d/uhttpd restart
+}
+restore_managed_options() {
+	mkdir -p "$state/read-only-delta"
+	for cfg in dhcp firewall uhttpd; do
+		cp "$state/baseline/$cfg" "$state/read-only-delta/fsd_original_$cfg"
+		cp "$state/applied/$cfg" "$state/read-only-delta/fsd_applied_$cfg"
+	done
+	# Restore only values still equal to what FSD set. Preserve later edits.
+	for key in 'dhcp.@dnsmasq[0].port' 'dhcp.@dnsmasq[0].dns_redirect' dhcp.lan.dhcp_option 'firewall.@defaults[0].flow_offloading' 'firewall.@defaults[0].flow_offloading_hw' uhttpd.main.listen_https uhttpd.main.cert uhttpd.main.key; do
+		current="$(uci -q get "$key" || true)"
+		applied="$(uci -c "$state/read-only-delta" -q get "fsd_applied_$key" || true)"
+		original="$(uci -c "$state/read-only-delta" -q get "fsd_original_$key" || true)"
+		if [ "$current" != "$applied" ]; then
+			echo "Preserving later change: $key" >&2
+			continue
+		fi
+		uci -q delete "$key" || true
+		if uci -c "$state/read-only-delta" -q get "fsd_original_$key" >/dev/null; then
+			case "$key" in
+				dhcp.lan.dhcp_option|uhttpd.main.listen_https)
+					for value in $original; do uci add_list "$key=$value"; done;;
+				*) uci set "$key=$original";;
+			esac
+		fi
+	done
+	for cfg in dhcp firewall uhttpd; do uci commit "$cfg"; done
+}
+preflight() {
+	[ "$(id -u)" = 0 ] || fail 'Run as root'
+	[ "$(uname -m)" = aarch64 ] || fail 'This build requires ARM64'
+	for tool in uci ubus nft fw4 curl nslookup iw conntrack netstat sha256sum; do
+		command -v "$tool" >/dev/null || fail "Missing dependency: $tool"
+	done
+	for cfg in fsd network wireless dhcp firewall uhttpd; do changed "$cfg"; done
+	[ "$(uci -q get network.lan.device)" = br-lan ] || fail 'LAN must use br-lan'
+	[ "$(uci -q get network.lan.proto)" = static ] || fail 'LAN must have a static address'
+	prefix="$(ip -4 addr show dev br-lan | awk '$1 == "inet" {print $2}')"
+	case "$prefix" in ''|*[!0-9./]*|*/*/*) fail 'br-lan must have exactly one IPv4 prefix';; esac
+	address=${prefix%/*}
+	ap="$(uci -q get fsd.main.ap_section)"
+	modem="$(uci -q get fsd.main.modem_interface)"
+	[ "$(uci -q get "wireless.$ap.mode")" = ap ] || fail 'Set fsd.main.ap_section to the actual AP section'
+	[ "$(uci -q get "network.$modem")" = interface ] || fail 'Set fsd.main.modem_interface to the cellular interface'
+	/etc/init.d/firewall enabled || fail 'Enable the firewall service first'
+	fw4 check
+	[ -f /usr/share/luci/menu.d/luci-app-fsd.json ] || fail 'LuCI files are missing'
+	[ -f "$state/active" ] || {
+		[ ! -e "$guard" ] || fail 'Existing unmanaged FSD guard: migrate the manual installation first'
+		listeners="$(netstat -lntup 2>/dev/null)"
+		printf '%s\n' "$listeners" | awk '$4 ~ /:(5355|8444)$/ {bad=1} END {exit bad}' || fail 'Ports 5355 or 8444 are occupied'
+		printf '%s\n' "$listeners" | awk '$4 ~ /:53$/ && $0 !~ /dnsmasq/ {bad=1} $4 ~ /:443$/ && $0 !~ /uhttpd/ {bad=1} END {exit bad}' || fail 'Ports 53/443 are used by another service'
+	}
+}
+health() {
+	read -r prefix < "$data/lan-prefix"
+	address=${prefix%/*}
+	checks="$(ubus call fsd checks '{"group":"https"}')" || return 1
+	printf '%s' "$checks" | grep -q '"status": "pass"' || return 1
+	if printf '%s' "$checks" | grep -q '"status": "fail"'; then return 1; fi
+	curl -fsS --max-time 4 --cacert "$data/luci.crt" "https://$address:8444/luci-static/resources/view/fsd/overview-v2.js" >/dev/null &&
+	nft get element inet fw4 fsd_forward_ready '{ "br-lan" }' >/dev/null 2>&1 &&
+	ubus call fsd status | grep -q '"ok": true'
+}
+
+case "$action" in
+check)
+	preflight
+	echo 'FSD prerequisites passed.'
+	;;
+enable)
+	if [ -f "$state/active" ]; then health; exit $?; fi
+	preflight
+	mkdir -p "$state/baseline" "$data"
+	chmod 700 "$state" "$state/baseline" "$data"
+	[ -e "$data/config.yaml" ] || cp "$share/config.example.yaml" "$data/config.yaml"
+	/usr/sbin/fsd-service -lan "$prefix" -ap-section "$ap" -modem-interface "$modem" -check -luci
+	for cfg in dhcp firewall uhttpd; do cp -p "/etc/config/$cfg" "$state/baseline/$cfg"; done
+	rollback() {
+		result=$?
+		trap - EXIT
+		if [ "$result" -ne 0 ]; then
+			echo 'FSD activation failed; restoring pre-activation network settings.' >&2
+			restore || echo 'Restore incomplete: inspect /etc/fsd-package/baseline' >&2
+		fi
+		exit "$result"
+	}
+	trap rollback EXIT
+	printf '%s\n' "$prefix" > "$data/lan-prefix"
+	/usr/sbin/fsd-service -lan "$prefix" -ap-section "$ap" -modem-interface "$modem" -print-guard > "$guard"
+	chmod 644 "$guard"
+	cp "$data/local.crt" "$data/luci.crt"
+	cp "$data/local.key" "$data/luci.key"
+	chmod 600 "$data"/*.key
+	uci set 'dhcp.@dnsmasq[0].port=5355'
+	uci set 'dhcp.@dnsmasq[0].dns_redirect=0'
+	# Replace only DNS-server DHCP options, retaining unrelated options in backup.
+	for option in $(uci -q get dhcp.lan.dhcp_option || true); do
+		case "$option" in 6,*|option:dns-server,*) uci del_list "dhcp.lan.dhcp_option=$option";; esac
+	done
+	uci add_list "dhcp.lan.dhcp_option=6,$address"
+	uci set 'firewall.@defaults[0].flow_offloading=0'
+	uci set 'firewall.@defaults[0].flow_offloading_hw=0'
+	uci -q delete uhttpd.main.listen_https || true
+	uci add_list 'uhttpd.main.listen_https=0.0.0.0:8444'
+	uci set "uhttpd.main.cert=$data/luci.crt"
+	uci set "uhttpd.main.key=$data/luci.key"
+	for cfg in dhcp firewall uhttpd; do uci commit "$cfg"; done
+	mkdir -p "$state/applied"
+	for cfg in dhcp firewall uhttpd; do cp -p "/etc/config/$cfg" "$state/applied/$cfg"; done
+	fw4 check
+	/etc/init.d/uhttpd restart
+	/etc/init.d/firewall reload
+	/etc/init.d/dnsmasq restart
+	clear_cache
+	/etc/init.d/rpcd restart
+	touch "$state/active"
+	/etc/init.d/fsd-service enable
+	/etc/init.d/fsd-service start
+	n=0
+	until health; do
+		n=$((n + 1)); [ "$n" -lt 15 ] || fail 'Service health check failed'
+		sleep 1
+	done
+	sha256sum /etc/config/dhcp /etc/config/firewall /etc/config/uhttpd > "$state/applied.sha256"
+	echo "FSD enabled: https://$address:8444/cgi-bin/luci/admin/services/fsd"
+	;;
+disable)
+	[ -f "$state/active" ] || { echo 'FSD is already inactive.'; exit 0; }
+	for cfg in dhcp firewall uhttpd; do changed "$cfg"; done
+	[ -f "$state/applied/dhcp" ] && [ -f "$state/baseline/dhcp" ] || fail 'Missing activation backup; recover using /etc/fsd-package before removing the package'
+	restore_managed_options
+	/etc/init.d/fsd-service stop || true
+	/etc/init.d/fsd-service disable || true
+	rm -f "$state/active" "$guard"
+	/etc/init.d/firewall restart
+	/etc/init.d/dnsmasq restart
+	/etc/init.d/uhttpd restart
+	echo 'FSD disabled; managed settings restored, later edits and business configuration retained.'
+	;;
+status)
+	if [ -f "$state/active" ]; then ubus call fsd status; else echo 'Installed, inactive. Run fsd-setup check, then fsd-setup enable.'; fi
+	;;
+*) fail 'Usage: fsd-setup {check|enable|disable|status}';;
+esac
