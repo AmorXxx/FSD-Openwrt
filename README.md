@@ -1,6 +1,6 @@
 # FSD for OpenWrt
 
-版本：1.7.2-r1。面向 ARM64 OpenWrt 的 DNS、HTTPS JSON 响应及 LuCI 管理服务。
+面向 ARM64 OpenWrt 的 DNS、HTTPS JSON 响应及 LuCI 管理服务。
 
 ## 功能
 
@@ -17,7 +17,7 @@
 
 ## 实机界面
 
-以下为 ZTE U30Air 上 FSD 1.7.0 的实机截图，使用 LuCI Aurora 主题。截图仅做裁剪、缩放和敏感信息遮盖；热点名、设备地址及业务域名未公开。不同 LuCI 主题的外观可能不同。
+以下为 ZTE U30Air 上 FSD 的实机截图，使用 LuCI Aurora 主题。截图仅做裁剪、缩放和敏感信息遮盖；热点名、设备地址及业务域名未公开。不同 LuCI 主题的外观可能不同。
 
 ### 配置方案与作用设备
 
@@ -54,7 +54,7 @@
 
 ## 构建
 
-需要 Python 3、Docker，以及满足 `src/go.mod` 的 Go 工具链（当前声明 Go 1.27.4）。在项目根目录执行：
+需要 Python 3、Docker，以及满足 `src/go.mod` 的 Go 工具链。在项目根目录执行：
 
 ```sh
 python3 scripts/build.py --go /path/to/go
@@ -79,7 +79,7 @@ OpenWrt SDK 方式使用根目录 Makefile；其构建依赖预先生成的 `dis
 
 ### 1. 确认设备条件
 
-本版本不是固件，不能刷入，也不能安装在普通电脑或 Android 手机上。当前二进制只支持 Linux ARM64 的 OpenWrt；发行包包含 `aarch64_generic` 和 `aarch64_cortex-a53` 两种架构标识；APK 和 IPK 分别对应 apk、opkg 包管理器。
+本项目不是固件，不能刷入，也不能安装在普通电脑或 Android 手机上。当前二进制只支持 Linux ARM64 的 OpenWrt；发行包包含 `aarch64_generic` 和 `aarch64_cortex-a53` 两种架构标识；APK 和 IPK 分别对应 apk、opkg 包管理器。
 
 在设备 SSH 中检查：
 
@@ -98,24 +98,24 @@ ip -4 addr show dev br-lan
 
 ### 2. 下载、解压和上传
 
-普通用户下载 **FSD-OpenWrt-1.7.2.zip 安装包**，不需要源码包。先在电脑解压，确认目录中有：
+普通用户前往 [最新 Release](https://github.com/AmorXxx/FSD-Openwrt/releases/latest)，下载 **FSD-OpenWrt 安装 ZIP**，不需要源码包。解压后将安装目录重命名为 `FSD-OpenWrt`，便于直接使用下面的命令。目录结构如下（`*` 表示文件名中的版本部分，实际文件无需改名）：
 
 ```text
-FSD-OpenWrt-1.7.2/
+FSD-OpenWrt/
 ├── README.md
 ├── install.sh
 └── dist/
-    ├── luci-app-fsd-1.7.2-r1_aarch64_generic.apk
-    ├── luci-app-fsd-1.7.2-r1_aarch64_cortex-a53.apk
-    ├── luci-app-fsd_1.7.2-1_aarch64_generic.ipk
-    ├── luci-app-fsd_1.7.2-1_aarch64_cortex-a53.ipk
+    ├── luci-app-fsd-*_aarch64_generic.apk
+    ├── luci-app-fsd-*_aarch64_cortex-a53.apk
+    ├── luci-app-fsd_*_aarch64_generic.ipk
+    ├── luci-app-fsd_*_aarch64_cortex-a53.ipk
     └── SHA256SUMS
 ```
 
 把整个目录上传到设备 `/tmp/`。例如在电脑终端进入解压目录的上一级，再执行：
 
 ```sh
-scp -O -r FSD-OpenWrt-1.7.2 root@192.168.50.1:/tmp/
+scp -O -r FSD-OpenWrt root@192.168.50.1:/tmp/
 ssh root@192.168.50.1
 ```
 
@@ -128,7 +128,7 @@ Windows 用户也可以用支持 SCP 的文件传输工具上传。`/tmp` 重启
 以下命令均在设备 SSH 中执行：
 
 ```sh
-cd /tmp/FSD-OpenWrt-1.7.2
+cd /tmp/FSD-OpenWrt
 (cd dist && sha256sum -c SHA256SUMS)
 ```
 
