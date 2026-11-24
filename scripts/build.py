@@ -13,7 +13,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = 'luci-app-fsd'
-VERSION = '1.7.0'
+VERSION = '1.7.1'
 ARCH = 'aarch64_generic'
 DEPS = ['firewall4', 'nftables', 'dnsmasq', 'uhttpd', 'uhttpd-mod-ubus',
         'luci-ssl', 'rpcd', 'rpcd-mod-iwinfo', 'curl', 'ca-bundle', 'iw', 'conntrack']

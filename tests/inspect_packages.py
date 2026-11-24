@@ -5,7 +5,7 @@ from pathlib import Path
 import tarfile
 
 root = Path(__file__).resolve().parents[1]
-data = (root/'dist/luci-app-fsd_1.7.0-1_aarch64_generic.ipk').read_bytes()
+data = (root/'dist/luci-app-fsd_1.7.1-1_aarch64_generic.ipk').read_bytes()
 assert data[:8] == b'!<arch>\n'
 offset, members = 8, {}
 while offset < len(data):

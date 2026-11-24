@@ -82,7 +82,7 @@ func newMonitor() *monitor {
 func (m *monitor) message(message string) {
 	m.Lock()
 	defer m.Unlock()
-	m.logs = append(m.logs, time.Now().Format(time.RFC3339)+" "+message)
+	m.logs = append(m.logs, systemNow().Format(displayTimeLayout)+" "+message)
 	if len(m.logs) > 150 {
 		m.logs = slices.Delete(m.logs, 0, 1)
 	}
@@ -140,7 +140,7 @@ func (m *monitor) recordDNS(client, name, kind, result string, code int, address
 		return
 	}
 	m.nextID++
-	now := time.Now()
+	now := systemNow()
 	m.events = append(m.events, dnsEvent{m.nextID, now, client, name, kind, result, code, addresses})
 	if len(m.events) > 400 {
 		m.events = slices.Delete(m.events, 0, 1)

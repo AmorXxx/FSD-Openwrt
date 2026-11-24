@@ -53,12 +53,12 @@ fi
 )
 
 if command -v apk >/dev/null; then
-	file=${1:-$base/dist/luci-app-fsd-1.7.0-r1.apk}
+	file=${1:-$base/dist/luci-app-fsd-1.7.1-r1.apk}
 	[ -f "$file" ] || { echo "Missing package: $file" >&2; exit 1; }
 	migration_preflight
 	apk add --allow-untrusted "$file"
 elif command -v opkg >/dev/null; then
-	file=${1:-$base/dist/luci-app-fsd_1.7.0-1_aarch64_generic.ipk}
+	file=${1:-$base/dist/luci-app-fsd_1.7.1-1_aarch64_generic.ipk}
 	[ -f "$file" ] || { echo "Missing package: $file" >&2; exit 1; }
 	migration_preflight
 	opkg install "$file"

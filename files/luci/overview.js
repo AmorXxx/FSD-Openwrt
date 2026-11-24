@@ -5,6 +5,13 @@
 'require poll';
 'require view.fsd.config-editor-v2 as configEditor';
 
+// Keep device-local wall time; hide the offset without converting to browser time.
+function deviceTime(value) {
+	return String(value || '').replace('T', ' ')
+		.replace(/\.\d+(?=Z|[+-]\d{2}:\d{2}$)/, '')
+		.replace(/(?:Z|[+-]\d{2}:\d{2})$/, '');
+}
+
 function method(name, params) {
 	var call = rpc.declare({
 		object: 'fsd',
@@ -401,11 +408,11 @@ return view.extend({
 					return [item.client, item.remote, item.port, item.protocol, item.domain,
 						traffic(item, '', units), traffic(item, '_per_sec', perSecond)];
 				}));
-			table(queries, [ _('时间'), _('设备'), _('域名'), _('类型'), _('结果'), _('应答地址') ],
+			table(queries, [ _('时间（设备系统时区）'), _('设备'), _('域名'), _('类型'), _('结果'), _('应答地址') ],
 				dnsFilter.apply(latestSample.dns || [], function(item) {
 					return [item.client, item.name, item.type, item.result, states[item.result], (item.addresses || []).join(' ')];
 				}).slice().reverse().map(function(item) {
-					return [new Date(item.time).toLocaleTimeString(), item.client, item.name, item.type,
+					return [deviceTime(item.time), item.client, item.name, item.type,
 						states[item.result] || item.result, (item.addresses || []).join(', ')];
 				}));
 		}
@@ -456,7 +463,7 @@ return view.extend({
 				button(_('加入'), async function() { await block('add', domain.value); await showMonitor(); }, !canWrite),
 				button(_('移除'), async function() { await block('del', domain.value); await showMonitor(); }, !canWrite)
 			]),
-			list, E('h3', {}, text(_('实时日志'))), logs
+			list, E('h3', {}, text(_('实时日志（设备系统时区）'))), logs
 		]);
 
 

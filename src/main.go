@@ -490,6 +490,8 @@ func boundSnapshotRows[T any](rows []T, budget int) []T {
 var started = time.Now()
 
 func main() {
+	log.SetFlags(0)
+	log.SetOutput(systemLogWriter{output: os.Stderr})
 	if len(os.Args) > 1 && os.Args[1] == "-rpcd" {
 		runFSDRPC(os.Args[2:])
 		return

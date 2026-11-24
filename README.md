@@ -1,6 +1,6 @@
 # FSD for OpenWrt
 
-版本：1.7.0-r1。面向 ARM64 OpenWrt 的 DNS、HTTPS JSON 响应及 LuCI 管理服务。
+版本：1.7.1-r1。面向 ARM64 OpenWrt 的 DNS、HTTPS JSON 响应及 LuCI 管理服务。
 
 ## 功能
 
@@ -12,6 +12,8 @@
 - 活动连接与域名筛选、诊断、自启和出网保护。
 
 网络、热点及上游由 OpenWrt 管理。FSD 忽略旧配置中的 `wifi` 节点，保存或切换后不再写入。FSD 仍会按启用流程配置其 DNS 服务、监听端口和必要的防火墙规则。
+
+日志和 DNS 查询时间使用 OpenWrt 已应用的系统时区（优先读取 `/etc/TZ`，否则读取 `/etc/localtime`），显示完整日期和 24 小时时间，不显示 UTC 偏移，也不使用浏览器时区。系统时区修改并应用后，服务约 1 秒内读取新配置；已有记录保留事件发生时的时间。
 
 ## 实机界面
 
@@ -88,22 +90,22 @@ ip -4 addr show dev br-lan
 
 ### 2. 下载、解压和上传
 
-普通用户下载 **FSD-OpenWrt-1.7.0.zip 安装包**，不需要源码包。先在电脑解压，确认目录中有：
+普通用户下载 **FSD-OpenWrt-1.7.1.zip 安装包**，不需要源码包。先在电脑解压，确认目录中有：
 
 ```text
-FSD-OpenWrt-1.7.0/
+FSD-OpenWrt-1.7.1/
 ├── README.md
 ├── install.sh
 └── dist/
-    ├── luci-app-fsd-1.7.0-r1.apk
-    ├── luci-app-fsd_1.7.0-1_aarch64_generic.ipk
+    ├── luci-app-fsd-1.7.1-r1.apk
+    ├── luci-app-fsd_1.7.1-1_aarch64_generic.ipk
     └── SHA256SUMS
 ```
 
 把整个目录上传到设备 `/tmp/`。例如在电脑终端进入解压目录的上一级，再执行：
 
 ```sh
-scp -O -r FSD-OpenWrt-1.7.0 root@192.168.50.1:/tmp/
+scp -O -r FSD-OpenWrt-1.7.1 root@192.168.50.1:/tmp/
 ssh root@192.168.50.1
 ```
 
@@ -114,7 +116,7 @@ Windows 用户也可以用支持 SCP 的文件传输工具上传。`/tmp` 重启
 以下命令均在设备 SSH 中执行：
 
 ```sh
-cd /tmp/FSD-OpenWrt-1.7.0
+cd /tmp/FSD-OpenWrt-1.7.1
 (cd dist && sha256sum -c SHA256SUMS)
 ```
 
