@@ -72,7 +72,7 @@ func runFSDRPC(args []string) {
 	}
 	if len(args) == 1 && args[0] == "list" {
 		reply(map[string]any{
-			"status": struct{}{}, "config": struct{}{}, "monitor": struct{}{},
+			"installation": struct{}{}, "status": struct{}{}, "config": struct{}{}, "monitor": struct{}{},
 			"probe": struct{}{}, "bench": struct{}{}, "editor": struct{}{},
 			"checks":          map[string]string{"group": ""},
 			"validate":        map[string]string{"yaml": ""},
@@ -92,6 +92,10 @@ func runFSDRPC(args []string) {
 	input := struct{ YAML, Action, Domain, Group, Draft string }{}
 	if err := json.NewDecoder(io.LimitReader(os.Stdin, 196608)).Decode(&input); err != nil && err != io.EOF {
 		reply(map[string]string{"error": "Invalid FSD RPC arguments"})
+		return
+	}
+	if args[1] == "installation" {
+		reply(installationState("/etc/fsd-package/active", fsdSocket))
 		return
 	}
 	transport := &http.Transport{
@@ -180,4 +184,16 @@ func runFSDRPC(args []string) {
 		return
 	}
 	reply(data)
+}
+
+// Available before the daemon is enabled so LuCI can render setup instructions.
+func installationState(activePath, socketPath string) map[string]bool {
+	_, err := os.Stat(activePath)
+	enabled := err == nil
+	socket, err := net.DialTimeout("unix", socketPath, 300*time.Millisecond)
+	running := err == nil
+	if socket != nil {
+		socket.Close()
+	}
+	return map[string]bool{"enabled": enabled, "running": running}
 }

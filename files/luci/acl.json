@@ -12,7 +12,8 @@
           "checks",
           "validate",
           "editor",
-          "profiles"
+          "profiles",
+          "installation"
         ]
       }
     },

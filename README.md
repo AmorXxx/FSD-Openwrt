@@ -1,6 +1,6 @@
 # FSD for OpenWrt
 
-版本：1.7.1-r1。面向 ARM64 OpenWrt 的 DNS、HTTPS JSON 响应及 LuCI 管理服务。
+版本：1.7.2-r1。面向 ARM64 OpenWrt 的 DNS、HTTPS JSON 响应及 LuCI 管理服务。
 
 ## 功能
 
@@ -61,6 +61,14 @@ python3 scripts/build.py --go /path/to/go
 python3 tests/inspect_packages.py
 ```
 
+默认只编译一次 ARM64 程序，再分别封装 `aarch64_generic` 和 `aarch64_cortex-a53` 的 APK/IPK。可重复传入 `--arch` 指定其他 ARM64 固件架构标识：
+
+```sh
+python3 scripts/build.py --go /path/to/go --arch aarch64_cortex-a53
+```
+
+架构标识应以目标固件的 `apk --print-arch` 或 `opkg print-architecture` 输出为准。安装脚本自动选择固件接受的包；没有匹配包时停止，不强制绕过检查。其他目标的内核与依赖兼容性仍需验证。后续可使用 OpenWrt SDK 自动生成目标架构元数据。
+
 生成的 `dist/` 包含 Linux ARM64 程序、APK、IPK 和 SHA256SUMS；不要提交生成文件到源码仓库。APK 使用固定摘要的 Alpine 构建环境，构建需要访问镜像仓库及 Go 依赖源。
 
 OpenWrt SDK 方式使用根目录 Makefile；其构建依赖预先生成的 `dist/fsd-service-linux-arm64`。
@@ -71,7 +79,7 @@ OpenWrt SDK 方式使用根目录 Makefile；其构建依赖预先生成的 `dis
 
 ### 1. 确认设备条件
 
-本版本不是固件，不能刷入，也不能安装在普通电脑或 Android 手机上。当前二进制只支持 Linux ARM64 / `aarch64_generic` 的 OpenWrt；APK 和 IPK 分别对应 apk、opkg 包管理器。
+本版本不是固件，不能刷入，也不能安装在普通电脑或 Android 手机上。当前二进制只支持 Linux ARM64 的 OpenWrt；发行包包含 `aarch64_generic` 和 `aarch64_cortex-a53` 两种架构标识；APK 和 IPK 分别对应 apk、opkg 包管理器。
 
 在设备 SSH 中检查：
 
@@ -90,33 +98,37 @@ ip -4 addr show dev br-lan
 
 ### 2. 下载、解压和上传
 
-普通用户下载 **FSD-OpenWrt-1.7.1.zip 安装包**，不需要源码包。先在电脑解压，确认目录中有：
+普通用户下载 **FSD-OpenWrt-1.7.2.zip 安装包**，不需要源码包。先在电脑解压，确认目录中有：
 
 ```text
-FSD-OpenWrt-1.7.1/
+FSD-OpenWrt-1.7.2/
 ├── README.md
 ├── install.sh
 └── dist/
-    ├── luci-app-fsd-1.7.1-r1.apk
-    ├── luci-app-fsd_1.7.1-1_aarch64_generic.ipk
+    ├── luci-app-fsd-1.7.2-r1_aarch64_generic.apk
+    ├── luci-app-fsd-1.7.2-r1_aarch64_cortex-a53.apk
+    ├── luci-app-fsd_1.7.2-1_aarch64_generic.ipk
+    ├── luci-app-fsd_1.7.2-1_aarch64_cortex-a53.ipk
     └── SHA256SUMS
 ```
 
 把整个目录上传到设备 `/tmp/`。例如在电脑终端进入解压目录的上一级，再执行：
 
 ```sh
-scp -O -r FSD-OpenWrt-1.7.1 root@192.168.50.1:/tmp/
+scp -O -r FSD-OpenWrt-1.7.2 root@192.168.50.1:/tmp/
 ssh root@192.168.50.1
 ```
 
 Windows 用户也可以用支持 SCP 的文件传输工具上传。`/tmp` 重启后会清空，这是安装文件的临时目录；安装后的配置不会保存在这里。
+
+安装后首次进入 LuCI 的 FSD 页面会显示启用说明，不会自动跳转到 8444。页面沿用当前 LuCI 地址；HTTP 下配置编辑保持只读，编辑请使用已配置且可访问的 LuCI HTTPS 地址。
 
 ### 3. 安装插件
 
 以下命令均在设备 SSH 中执行：
 
 ```sh
-cd /tmp/FSD-OpenWrt-1.7.1
+cd /tmp/FSD-OpenWrt-1.7.2
 (cd dist && sha256sum -c SHA256SUMS)
 ```
 
@@ -342,7 +354,7 @@ apk del luci-app-fsd
 | `Set fsd.main.ap_section` / cellular interface 错误 | 按第 4 步填写实际 UCI 节名称 |
 | LAN 不是 br-lan/static | 当前自动启用流程不支持此布局，先确认网络规划，不要盲目修改远程设备 |
 | 端口占用 | 查找占用 53/443/5355/8444 的服务，解决冲突后再启用 |
-| 管理页面打不开 | 使用实际 LAN IP、HTTPS 和 8444；确认在 LAN 内、服务已启用；查看 status 和日志 |
+| 管理页面打不开 | 未启用时使用原 LuCI 地址查看启用说明；启用后使用命令输出的地址，或已配置的 LuCI HTTPS 地址；检查服务状态和日志 |
 | DNS 解析未变化 | 核对客户端 DNS、作用设备 IP，重新连接热点或更新 DHCP，检查缓存及安全 DNS/VPN |
 | HTTPS 证书错误 | 核对域名、证书/私钥及客户端信任；curl 的测试跳过校验不能解决客户端信任问题 |
 | JSON 返回 404 | 检查完整路径、大小写、斜杠、单段通配符及当前方案 |

@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,8 +14,8 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = 'luci-app-fsd'
-VERSION = '1.7.1'
-ARCH = 'aarch64_generic'
+VERSION = '1.7.2'
+DEFAULT_ARCHES = ['aarch64_generic', 'aarch64_cortex-a53']
 DEPS = ['firewall4', 'nftables', 'dnsmasq', 'uhttpd', 'uhttpd-mod-ubus',
         'luci-ssl', 'rpcd', 'rpcd-mod-iwinfo', 'curl', 'ca-bundle', 'iw', 'conntrack']
 IMAGE = 'alpine@sha256:020dfcbaaf4cc1078bf2d9c7ba31a8466e334061dcd2f248001d68f79e52c000'
@@ -69,16 +70,16 @@ def tar_gz(root):
     with gzip.GzipFile(fileobj=output, mode='wb', mtime=0, filename='') as stream: stream.write(raw.getvalue())
     return output.getvalue()
 
-def ipk(root):
+def ipk(root, arch):
     control = ROOT / 'build/control'
     if control.exists(): shutil.rmtree(control)
     control.mkdir()
     size = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
-    write(control, 'control', f'Package: {NAME}\nVersion: {VERSION}-1\nArchitecture: {ARCH}\nDepends: {", ".join(DEPS)}\nSection: luci\nPriority: optional\nMaintainer: Local FSD project\nLicense: LicenseRef-Unspecified\nInstalled-Size: {size}\nDescription: FSD DNS, HTTPS JSON endpoints and LuCI management\n')
+    write(control, 'control', f'Package: {NAME}\nVersion: {VERSION}-1\nArchitecture: {arch}\nDepends: {", ".join(DEPS)}\nSection: luci\nPriority: optional\nMaintainer: Local FSD project\nLicense: LicenseRef-Unspecified\nInstalled-Size: {size}\nDescription: FSD DNS, HTTPS JSON endpoints and LuCI management\n')
     write(control, 'conffiles', '/etc/config/fsd\n')
     for script in ['preinst','postinst','prerm','postrm']: put(ROOT/'files'/script, control/script, 0o755)
     members = [('debian-binary', b'2.0\n'), ('control.tar.gz', tar_gz(control)), ('data.tar.gz', tar_gz(root))]
-    target = ROOT / 'dist' / f'{NAME}_{VERSION}-1_{ARCH}.ipk'
+    target = ROOT / 'dist' / f'{NAME}_{VERSION}-1_{arch}.ipk'
     with target.open('wb') as output:
         output.write(b'!<arch>\n')
         for name, data in members:
@@ -88,17 +89,17 @@ def ipk(root):
             if len(data) % 2: output.write(b'\n')
     return target
 
-def apk(root):
+def apk(root, arch):
     conf = '/etc/config/fsd'
     checksum = hashlib.sha256((root / conf.lstrip('/')).read_bytes()).hexdigest()
     write(root, 'lib/apk/packages/luci-app-fsd.conffiles', conf + '\n')
     write(root, 'lib/apk/packages/luci-app-fsd.conffiles_static', f'{conf} {checksum}\n')
     paths = ['/' + str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()]
     write(root, 'lib/apk/packages/luci-app-fsd.list', '\n'.join(sorted(paths)) + '\n')
-    target = ROOT / 'dist' / f'{NAME}-{VERSION}-r1.apk'
+    target = ROOT / 'dist' / f'{NAME}-{VERSION}-r1_{arch}.apk'
     # Work on container-owned files to record uid/gid 0 rather than host ownership.
     arguments = ['apk','mkpkg','--info',f'name:{NAME}','--info',f'version:{VERSION}-r1',
-                 '--info',f'arch:{ARCH}','--info','license:LicenseRef-Unspecified',
+                 '--info',f'arch:{arch}','--info','license:LicenseRef-Unspecified',
                  '--info','description:FSD DNS, HTTPS JSON endpoints and LuCI management',
                  '--info','origin:local/fsd-openwrt','--info','depends:'+' '.join(DEPS),
                  '--files','/tmp/fsd-root','--output','/work/dist/'+target.name]
@@ -115,7 +116,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--go', default=os.environ.get('GO', 'go'))
     parser.add_argument('--binary', type=Path, help='Use a previously built Linux ARM64 binary')
+    parser.add_argument('--arch', action='append', help='OpenWrt package architecture; repeat for multiple targets (default: generic and cortex-a53)')
     args = parser.parse_args()
+    arches = list(dict.fromkeys(args.arch or DEFAULT_ARCHES))
+    if any(not re.fullmatch(r'aarch64_[a-z0-9_-]+', arch) for arch in arches):
+        parser.error('--arch must be an aarch64_* OpenWrt package architecture')
     (ROOT/'dist').mkdir(exist_ok=True)
     binary = args.binary or ROOT/'dist/fsd-service-linux-arm64'
     if not args.binary:
@@ -124,8 +129,10 @@ def main():
     header = binary.read_bytes()[:20]
     if header[:4] != b'\x7fELF' or header[4:6] != b'\x02\x01' or header[18:20] != b'\xb7\x00':
         raise SystemExit('Expected a little-endian Linux ARM64 ELF executable')
-    root = stage(binary)
-    packages = [ipk(root), apk(root)]
+    packages = []
+    for arch in arches:
+        root = stage(binary)
+        packages.extend([ipk(root, arch), apk(root, arch)])
     manifest = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in packages}
     (ROOT/'dist/SHA256SUMS').write_text(''.join(f'{sha}  {name}\n' for name,sha in manifest.items()))
     print(json.dumps(manifest, indent=2))

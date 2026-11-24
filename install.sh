@@ -53,12 +53,25 @@ fi
 )
 
 if command -v apk >/dev/null; then
-	file=${1:-$base/dist/luci-app-fsd-1.7.1-r1.apk}
+	file=${1:-}
+	if [ -z "$file" ]; then
+		arch=$(apk --print-arch) || { echo 'Cannot read APK architecture' >&2; exit 1; }
+		case "$arch" in aarch64_*) ;; *) echo "Unsupported APK architecture: $arch" >&2; exit 1 ;; esac
+		file="$base/dist/luci-app-fsd-1.7.2-r1_${arch}.apk"
+	fi
 	[ -f "$file" ] || { echo "Missing package: $file" >&2; exit 1; }
 	migration_preflight
 	apk add --allow-untrusted "$file"
 elif command -v opkg >/dev/null; then
-	file=${1:-$base/dist/luci-app-fsd_1.7.1-1_aarch64_generic.ipk}
+	file=${1:-}
+	if [ -z "$file" ]; then
+		arches=$(opkg print-architecture) || { echo 'Cannot read opkg architectures' >&2; exit 1; }
+		for arch in $(printf '%s\n' "$arches" | sort -k3,3nr | awk '$1 == "arch" && $2 ~ /^aarch64_[a-z0-9_-]+$/ {print $2}'); do
+			candidate="$base/dist/luci-app-fsd_1.7.2-1_${arch}.ipk"
+			if [ -f "$candidate" ]; then file=$candidate; break; fi
+		done
+		[ -n "$file" ] || { echo 'No package matches the architectures accepted by opkg; obtain a matching build.' >&2; exit 1; }
+	fi
 	[ -f "$file" ] || { echo "Missing package: $file" >&2; exit 1; }
 	migration_preflight
 	opkg install "$file"

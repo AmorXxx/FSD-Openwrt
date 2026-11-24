@@ -29,6 +29,7 @@ function method(name, params) {
 	};
 }
 
+var installation = method('installation');
 var status = method('status');
 var config = method('config');
 var profiles = method('profiles');
@@ -191,24 +192,23 @@ return view.extend({
 	handleReset: null,
 
 	load: function() {
-		if (window.location.protocol === 'http:') {
-			var target = new URL(window.location.pathname, window.location.origin);
-			target.protocol = 'https:';
-			target.port = '8444';
-			window.location.replace(target.href);
-			return Promise.resolve(target.href);
-		}
-		return Promise.all([status(), config(), readEditor().catch(function() { return null; }), profiles()]);
+		return installation().then(function(state) {
+			if (!state.enabled || !state.running)
+				return { installation: state };
+			return Promise.all([status(), config(), readEditor().catch(function() { return null; }), profiles()]);
+		});
 	},
 
 	render: function(data) {
-		if (typeof data === 'string')
+		if (data.installation) {
+			var state = data.installation;
 			return E('div', { 'class': 'cbi-map' }, [
 				E('h2', {}, 'FSD'),
-				E('p', {}, E('a', {
-					'class': 'cbi-button cbi-button-action', 'href': data
-				}, text(_('打开 FSD HTTPS 管理页'))))
+				E('p', {}, text(state.enabled ? _('FSD 已启用，但服务未运行。请通过 SSH 检查并启动服务。') : _('FSD 已安装，尚未启用。请通过 SSH 执行以下命令：'))),
+				E('pre', {}, state.enabled ? '/etc/init.d/fsd-service start' : 'fsd-setup check\nfsd-setup enable'),
+				E('p', {}, text(_('完成后使用命令输出的管理地址，或刷新当前页面。')))
 			]);
+		}
 
 		var canWrite = L.hasViewPermission();
 		var secure = window.location.protocol === 'https:';
