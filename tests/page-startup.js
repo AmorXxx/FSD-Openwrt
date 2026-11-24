@@ -5,7 +5,7 @@ const load = source.match(/load: function\(\) \{([\s\S]*?)\n\t\},\n\n\trender:/)
  for (const protocol of ['http:', 'https:']) {
   for (const state of [{enabled:false,running:false}, {enabled:true,running:false}, {enabled:true,running:true}]) {
    let calls=0;
-   const ctx={installation:async()=>state,status:async()=>{calls++;return{};},config:async()=>({}),readEditor:async()=>({}),profiles:async()=>({}),window:{location:{protocol,replace:()=>{throw Error('Unexpected redirect');}}}};
+   const ctx={installation:async()=>state,status:async()=>{calls++;return{};},config:async()=>({}),readEditor:async()=>({}),profiles:async()=>({active:"config.yaml"}),readDocument:async()=>({}),window:{location:{protocol,replace:()=>{throw Error('Unexpected redirect');}}}};
    const result=await vm.runInNewContext('(function(){'+load+'})()',ctx);
    assert.equal(calls, state.enabled && state.running ? 1:0);
    if (!state.enabled || !state.running) assert.deepEqual(result.installation,state);

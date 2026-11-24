@@ -411,3 +411,6 @@
  .fsd-view .fsd-profile-picker select { flex-basis: 100%; }
  .fsd-view .fsd-profile-active { width: 100%; box-sizing: border-box; }
 }
+
+.fsd-view .fsd-active-file-banner { margin: 1rem 0; padding: 1rem; border: 2px solid #238c89; border-radius: 8px; background: #14808012; }
+.fsd-view .fsd-active-file-banner .fsd-profile-active { display: block; font-size: 1.15rem; overflow-wrap: anywhere; background: transparent; padding: 0; }

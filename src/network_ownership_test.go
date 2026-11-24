@@ -42,20 +42,20 @@ func TestLegacyWiFiIgnoredWithoutNetworkWrites(t *testing.T) {
 	if bytes.Contains(saved, []byte("wifi:")) {
 		t.Fatal("legacy Wi-Fi persisted on apply")
 	}
-	if err = writePrivate(app.profileFile("legacy"), legacy); err != nil {
+	if err = writePrivate(app.profileFile("legacy.yaml"), legacy); err != nil {
 		t.Fatal(err)
 	}
-	if err = app.changeProfile(profileAction{Action: "copy", Name: "copy", Source: "legacy", Active: active}); err != nil {
+	if err = app.changeProfile(profileAction{Action: "copy", Name: "copy.yaml", Source: "legacy.yaml", Active: active}); err != nil {
 		t.Fatal(err)
 	}
-	copied, _ := os.ReadFile(app.profileFile("copy"))
+	copied, _ := os.ReadFile(app.profileFile("copy.yaml"))
 	if bytes.Contains(copied, []byte("wifi:")) {
 		t.Fatal("legacy Wi-Fi persisted on copy")
 	}
-	if err = app.changeProfile(profileAction{Action: "switch", Name: "legacy", Active: active}); err != nil {
+	if err = app.changeProfile(profileAction{Action: "switch", Name: "legacy.yaml", Active: active}); err != nil {
 		t.Fatal(err)
 	}
-	saved, _ = os.ReadFile(app.profileFile("legacy"))
+	saved, _ = os.ReadFile(app.profileFile("legacy.yaml"))
 	if bytes.Contains(saved, []byte("wifi:")) {
 		t.Fatal("legacy Wi-Fi persisted on switch")
 	}

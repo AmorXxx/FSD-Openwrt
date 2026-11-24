@@ -74,14 +74,15 @@ func runFSDRPC(args []string) {
 		reply(map[string]any{
 			"installation": struct{}{}, "status": struct{}{}, "config": struct{}{}, "monitor": struct{}{},
 			"probe": struct{}{}, "bench": struct{}{}, "editor": struct{}{},
-			"checks":          map[string]string{"group": ""},
-			"validate":        map[string]string{"yaml": ""},
-			"apply":           map[string]string{"yaml": ""},
-			"profiles":        struct{}{},
-			"profile_action":  map[string]string{"draft": ""},
-			"save_editor":     map[string]string{"draft": ""},
-			"block":           map[string]string{"action": "", "domain": ""},
-			"monitor_control": map[string]string{"action": ""},
+			"checks":           map[string]string{"group": ""},
+			"validate":         map[string]string{"yaml": ""},
+			"apply":            map[string]string{"yaml": ""},
+			"profiles":         struct{}{},
+			"profile_document": map[string]string{"name": ""},
+			"profile_action":   map[string]string{"draft": ""},
+			"save_editor":      map[string]string{"draft": ""},
+			"block":            map[string]string{"action": "", "domain": ""},
+			"monitor_control":  map[string]string{"action": ""},
 		})
 		return
 	}
@@ -89,8 +90,8 @@ func runFSDRPC(args []string) {
 		reply(map[string]string{"error": "Unknown FSD RPC operation"})
 		return
 	}
-	input := struct{ YAML, Action, Domain, Group, Draft string }{}
-	if err := json.NewDecoder(io.LimitReader(os.Stdin, 196608)).Decode(&input); err != nil && err != io.EOF {
+	input := struct{ YAML, Action, Domain, Group, Draft, Name string }{}
+	if err := json.NewDecoder(io.LimitReader(os.Stdin, 2*1024*1024)).Decode(&input); err != nil && err != io.EOF {
 		reply(map[string]string{"error": "Invalid FSD RPC arguments"})
 		return
 	}
@@ -140,6 +141,8 @@ func runFSDRPC(args []string) {
 		data, err = request("GET", "/api/config", "", "")
 	case "profiles":
 		data, err = request("GET", "/api/fsd/profiles", "", "")
+	case "profile_document":
+		data, err = request("GET", "/api/fsd/profiles?"+url.Values{"name": {input.Name}}.Encode(), "", "")
 	case "profile_action":
 		data, err = request("POST", "/api/fsd/profiles", "application/json", input.Draft)
 	case "editor":

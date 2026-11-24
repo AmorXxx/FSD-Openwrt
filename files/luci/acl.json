@@ -13,6 +13,7 @@
           "validate",
           "editor",
           "profiles",
+          "profile_document",
           "installation"
         ]
       }

@@ -127,6 +127,11 @@ func uciGet(key string) string {
 func (app *application) replaceConfig(data []byte) error {
 	app.update.Lock()
 	defer app.update.Unlock()
+	return app.replaceConfigLocked(data)
+}
+
+// Caller holds app.update, including filename-checked YAML updates.
+func (app *application) replaceConfigLocked(data []byte) error {
 	cfg, err := app.validateImport(data)
 	if err != nil {
 		return err

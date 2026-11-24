@@ -32,14 +32,14 @@ func TestProfileLifecycleAndRestart(t *testing.T) {
 		}
 	}
 	original, _ := os.ReadFile(app.profileFile(initial))
-	act("save", "工作", "")
+	act("save", "工作.yaml", "")
 	cfg := app.current.Load().config
 	cfg.Routes = []customRoute{{Path: "/work", JSON: `{"work":true}`}}
 	data, _ := yaml.Marshal(cfg)
-	if err := writePrivate(app.profileFile("工作"), data); err != nil {
+	if err := writePrivate(app.profileFile("工作.yaml"), data); err != nil {
 		t.Fatal(err)
 	}
-	act("switch", "工作", "")
+	act("switch", "工作.yaml", "")
 	if app.current.Load().Routes[0].Path != "/work" {
 		t.Fatal("runtime not switched")
 	}
@@ -62,12 +62,12 @@ func TestProfileLifecycleAndRestart(t *testing.T) {
 	if !bytes.Equal(original, unchanged) {
 		t.Fatal("save changed inactive profile")
 	}
-	act("rename", "工作新版", "工作")
-	act("copy", "副本", "工作新版")
-	if err := app.changeProfile(profileAction{Action: "delete", Name: "工作新版", Active: "工作新版"}); err == nil {
+	act("rename", "工作新版.yaml", "工作.yaml")
+	act("copy", "副本.yaml", "工作新版.yaml")
+	if err := app.changeProfile(profileAction{Action: "delete", Name: "工作新版.yaml", Active: "工作新版.yaml"}); err == nil {
 		t.Fatal("deleted active")
 	}
-	act("delete", "副本", "")
+	act("delete", "副本.yaml", "")
 	act("switch", initial, "")
 	if app.current.Load().Routes[0].Path != "/a" {
 		t.Fatal("original profile lost")
@@ -85,8 +85,8 @@ func TestProfileRejectsInvalidAndRollsBack(t *testing.T) {
 	if err := app.changeProfile(profileAction{Action: "save", Name: "x", Active: "stale"}); err == nil {
 		t.Fatal("accepted stale state")
 	}
-	writePrivate(app.profileFile("bad"), []byte("not: valid"))
-	if err := app.changeProfile(profileAction{Action: "switch", Name: "bad", Active: active}); err == nil {
+	writePrivate(app.profileFile("bad.yaml"), []byte("not: valid"))
+	if err := app.changeProfile(profileAction{Action: "switch", Name: "bad.yaml", Active: active}); err == nil {
 		t.Fatal("accepted invalid YAML")
 	}
 	now, _ := app.activeProfile()
@@ -112,10 +112,10 @@ func TestProfilePermissionsAndEditorIsolation(t *testing.T) {
 		t.Fatal("private profile permissions", err)
 	}
 	previous := app.editorSnapshot(app.current.Load().config)
-	if err := app.changeProfile(profileAction{Action: "save", Name: "second", Active: active}); err != nil {
+	if err := app.changeProfile(profileAction{Action: "save", Name: "second.yaml", Active: active}); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.changeProfile(profileAction{Action: "switch", Name: "second", Active: active}); err != nil {
+	if err := app.changeProfile(profileAction{Action: "switch", Name: "second.yaml", Active: active}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := app.saveEditor(editorUpdate{Revision: previous.Revision}); err == nil {
@@ -123,8 +123,76 @@ func TestProfilePermissionsAndEditorIsolation(t *testing.T) {
 	}
 	external := filepath.Join(t.TempDir(), "outside.yaml")
 	os.WriteFile(external, []byte("private"), 0600)
-	os.Symlink(external, app.profileFile("link"))
-	if err := app.changeProfile(profileAction{Action: "switch", Name: "link", Active: "second"}); err == nil {
+	os.Symlink(external, app.profileFile("link.yaml"))
+	if err := app.changeProfile(profileAction{Action: "switch", Name: "link.yaml", Active: "second.yaml"}); err == nil {
 		t.Fatal("accepted symlink profile")
+	}
+}
+
+func TestYAMLOriginalFilenameImportAndApply(t *testing.T) {
+	app := profileTestApp(t)
+	active, _ := app.activeProfile()
+	if active != "config.yaml" {
+		t.Fatalf("unexpected migration filename %q", active)
+	}
+	original, _ := os.ReadFile(app.profileFile(active))
+	name := "home.v2 配置.yml"
+	data := append([]byte("# original filename and comment\n"), original...)
+	if err := app.changeProfile(profileAction{Action: "import", Name: name, Active: active, YAML: string(data)}); err != nil {
+		t.Fatal(err)
+	}
+	imported, _ := os.ReadFile(app.profileFile(name))
+	if !bytes.Equal(data, imported) {
+		t.Fatal("import changed YAML")
+	}
+	state, _ := app.profilesState()
+	if state.Active != active || len(state.Names) != 2 {
+		t.Fatal("import switched active file or omitted yml", state)
+	}
+	if err := app.changeProfile(profileAction{Action: "import", Name: name, Active: active, YAML: string(original)}); err == nil {
+		t.Fatal("overwrote duplicate")
+	}
+	if err := app.changeProfile(profileAction{Action: "apply", Name: name, Active: active, YAML: string(data)}); err == nil {
+		t.Fatal("edited inactive file")
+	}
+	if err := app.changeProfile(profileAction{Action: "switch", Name: name, Active: active}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.initProfiles(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.changeProfile(profileAction{Action: "apply", Name: active, Active: active, YAML: string(original)}); err == nil {
+		t.Fatal("stale YAML editor overwrote new file")
+	}
+	if err := app.changeProfile(profileAction{Action: "apply", Name: name, Active: name, YAML: string(data)}); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, _ := os.ReadFile(app.profileFile(active))
+	if !bytes.Equal(original, unchanged) {
+		t.Fatal("apply modified other file")
+	}
+	for _, bad := range []string{"../bad.yaml", "nested/a.yml", `nested\a.yml`, ".hidden.yaml", "bad.yaml\n", "no-extension", "a.txt"} {
+		if validProfile(bad) {
+			t.Fatalf("accepted unsafe filename %q", bad)
+		}
+	}
+}
+
+func TestExistingYAMLNamePreserved(t *testing.T) {
+	app := profileTestApp(t)
+	active, _ := app.activeProfile()
+	old := "默认方案.yaml"
+	if err := os.Rename(app.profileFile(active), app.profileFile(old)); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.pointProfile(old); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.initProfiles(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := app.profilesState()
+	if err != nil || state.Active != old || len(state.Names) != 1 || state.Names[0] != old {
+		t.Fatal("legacy filename changed", state, err)
 	}
 }

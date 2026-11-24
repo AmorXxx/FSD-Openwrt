@@ -58,14 +58,14 @@ return baseclass.extend({
 		var allowedDomains = input('fsd-blacklist-allow', '', 'api.example.com', true);
 		blockedDomains.rows = allowedDomains.rows = 5;
 		var feedback = E('div', { 'class': 'fsd-editor-feedback', 'role': 'status' });
-		var saveButton = action(_('保存并应用'), async function() {
+		var saveButton = action(_('保存文件'), async function() {
 			try {
 				var draft = readDraft();
 				var encoded = JSON.stringify(draft);
 				if (new Blob([JSON.stringify({ draft: encoded })]).size > 60 * 1024)
 					throw new Error(_('本次修改的数据过多，请分次保存大型 JSON 接口。'));
 				reset(await save(encoded));
-				feedback.textContent = _('设备范围、DNS、持久黑白名单和 HTTPS JSON 接口已更新');
+				feedback.textContent = _('文件已保存，运行配置未改变；点击「应用此文件」生效。');
 			} catch (error) {
 				feedback.textContent = error.message;
 			}
@@ -251,7 +251,7 @@ return baseclass.extend({
 			E('div', { 'class': 'fsd-form-heading' }, [E('h4', {}, _('DNS 记录')), addDNS]),
 			dnsList,
 			E('h4', {}, _('持久 DNS 黑白名单')),
-			E('p', {}, _('保存后立即生效，服务或设备重启后保留。每行一条，不填写 https:// 或接口路径；留空表示清空对应列表。')),
+			E('p', {}, _('保存只写文件，点击「应用此文件」后才生效。每行一条，不填写 https:// 或接口路径；留空表示清空对应列表。')),
 			field(_('黑名单（block）'), blockedDomains),
 			E('p', {}, _('普通域名同时拦截其子域名，也支持 * 和 ? 通配符。')),
 			field(_('白名单（allow）'), allowedDomains),

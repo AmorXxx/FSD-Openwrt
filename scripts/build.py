@@ -14,7 +14,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = 'luci-app-fsd'
-VERSION = '1.7.2'
+VERSION = '1.7.4'
 DEFAULT_ARCHES = ['aarch64_generic', 'aarch64_cortex-a53']
 DEPS = ['firewall4', 'nftables', 'dnsmasq', 'uhttpd', 'uhttpd-mod-ubus',
         'luci-ssl', 'rpcd', 'rpcd-mod-iwinfo', 'curl', 'ca-bundle', 'iw', 'conntrack']
@@ -42,7 +42,7 @@ def stage(binary):
     put(files / 'fsd.config', root / 'etc/config/fsd', 0o600)
     for name in ['config.example.yaml', 'fsd-forward-guard.nft']:
         put(files / name, root / 'usr/share/fsd' / name)
-    for source, target in [('overview.js','overview-v2.js'), ('config-editor.js','config-editor-v2.js'), ('overview.css','overview.css')]:
+    for source, target in [('overview.js','overview-v4.js'), ('config-editor.js','config-editor-v4.js'), ('overview.css','overview.css')]:
         put(files / 'luci' / source, root / 'www/luci-static/resources/view/fsd' / target)
     put(files / 'luci/menu.json', root / 'usr/share/luci/menu.d/luci-app-fsd.json')
     put(files / 'luci/acl.json', root / 'usr/share/rpcd/acl.d/luci-app-fsd.json')

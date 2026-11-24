@@ -4,7 +4,7 @@
     "order": 45,
     "action": {
       "type": "view",
-      "path": "fsd/overview-v2"
+      "path": "fsd/overview-v4"
     },
     "depends": {
       "acl": [ "luci-app-fsd" ]

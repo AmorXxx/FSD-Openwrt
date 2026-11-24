@@ -3,7 +3,7 @@
 'require rpc';
 'require ui';
 'require poll';
-'require view.fsd.config-editor-v2 as configEditor';
+'require view.fsd.config-editor-v4 as configEditor';
 
 // Keep device-local wall time; hide the offset without converting to browser time.
 function deviceTime(value) {
@@ -31,12 +31,9 @@ function method(name, params) {
 
 var installation = method('installation');
 var status = method('status');
-var config = method('config');
 var profiles = method('profiles');
 var profileAction = method('profile_action', ['draft']);
-var readEditor = method('editor');
-var saveEditor = method('save_editor', [ 'draft' ]);
-var apply = method('apply', [ 'yaml' ]);
+var readDocument = method('profile_document', ['name']);
 var validate = method('validate', [ 'yaml' ]);
 var monitor = method('monitor');
 var block = method('block', [ 'action', 'domain' ]);
@@ -195,7 +192,9 @@ return view.extend({
 		return installation().then(function(state) {
 			if (!state.enabled || !state.running)
 				return { installation: state };
-			return Promise.all([status(), config(), readEditor().catch(function() { return null; }), profiles()]);
+			return profiles().then(function(files) {
+				return Promise.all([status(), readDocument(files.active), Promise.resolve(null), Promise.resolve(files)]);
+			});
 		});
 	},
 
@@ -227,6 +226,7 @@ return view.extend({
 			'type': 'file', 'accept': '.yaml,.yml,application/yaml,text/yaml', 'hidden': ''
 		});
 		var currentYAML = data[1].yaml;
+		var editingName = data[1].name, fileRevision = data[1].revision;
 		var rawReady = true;
 		var configBusy = false;
 		var rawFeedback = E('div', { 'class': 'fsd-editor-feedback', 'role': 'status' });
@@ -272,16 +272,12 @@ return view.extend({
 			quick = configEditor.create(snapshot, canEdit, function(draft) {
 				return runConfigAction(async function() {
 					if (editor.value !== currentYAML)
-						throw new Error(_('高级 YAML 有未应用的修改，请先处理该草稿。'));
-					var saved = await saveEditor(draft);
-					try {
-						setYAML((await config()).yaml);
-					} catch (error) {
-						rawReady = false;
-						editor.readOnly = true;
-						rawFeedback.textContent = _('表单已保存。请重新读取以更新 YAML。');
-					}
-					return saved;
+						throw new Error(_('高级 YAML 有未保存的修改，请先处理该草稿。'));
+                    var saved = await profileAction(JSON.stringify({action: 'write_editor', name: editingName, revision: fileRevision, editor: JSON.parse(draft)}));
+                    fileRevision = saved.revision;
+                    setYAML(saved.yaml);
+                    refreshProfiles(await profiles());
+                    return saved.editor;
 				});
 			});
 			quickContainer.replaceChildren(quick.node);
@@ -302,7 +298,12 @@ return view.extend({
 						throw new Error(_('请先重新读取配置'));
 					if (candidate.size > 128 * 1024)
 						throw new Error(_('YAML 文件上限为 128 KiB'));
-					editor.value = await candidate.text();
+					requireCleanForm();
+                    if (editor.value !== currentYAML) throw new Error(_('请先保存或放弃 YAML 草稿。'));
+                    var updated = await profileAction(JSON.stringify({action: 'import', name: candidate.name, active: profileState.active, yaml: await candidate.text()}));
+                    refreshProfiles(updated);
+                    await loadDocument(candidate.name);
+                    profileFeedback.textContent = _('已导入并打开「%s」，尚未应用。').format(candidate.name);
 				});
 			} catch (error) {
 				ui.addNotification(null, E('p', {}, text(error.message)), 'error');
@@ -334,27 +335,22 @@ return view.extend({
 				await validate(yamlToCheck());
 				message(_('YAML 验证通过，尚未应用'));
 			}, !secure),
-			button(_('应用 YAML'), function() {
-				return runConfigAction(async function() {
-					requireCleanForm();
-					await apply(yamlToCheck());
-					rawReady = false;
-					editor.readOnly = true;
-					try {
-						setYAML((await config()).yaml);
-					} catch (error) {
-						rawFeedback.textContent = _('配置已应用。请重新读取以更新 YAML。');
-					}
-					setQuick(await readEditor().catch(function() { return null; }));
-					message(_('配置已应用'));
-				});
-			}, !canEdit),
-			button(_('从文件加载'), function() { file.click(); }, !canEdit),
+            button(_('保存 YAML 文件'), function() {
+                return runConfigAction(async function() {
+                    requireCleanForm();
+                    var saved = await profileAction(JSON.stringify({action: 'write_yaml', name: editingName, revision: fileRevision, yaml: yamlToCheck()}));
+                    fileRevision = saved.revision;
+                    setYAML(saved.yaml); setQuick(saved.editor);
+                    refreshProfiles(await profiles());
+                    message(_('文件已保存，运行配置未改变；点击「应用此文件」生效。'));
+                });
+            }, !canEdit),
+			button(_('导入 YAML 文件'), function() { file.click(); }, !canEdit),
 			button(_('下载 YAML'), async function() {
-				var current = await config();
+				var current = await readDocument(editingName);
 				var blob = new Blob([current.yaml], { type: 'application/yaml' });
 				var url = URL.createObjectURL(blob);
-				var link = E('a', { 'href': url, 'download': 'fsd.example.yaml' });
+				var link = E('a', { 'href': url, 'download': current.name });
 				document.body.appendChild(link);
 				link.click();
 				link.remove();
@@ -363,10 +359,9 @@ return view.extend({
 			button(_('重新读取'), function() {
 				return runConfigAction(async function() {
 					requireCleanForm();
-					var current = await Promise.all([config(), readEditor().catch(function() { return null; })]);
-					refreshProfiles(await profiles());
-					setYAML(current[0].yaml);
-					setQuick(current[1]);
+                    if (editor.value !== currentYAML && !window.confirm(_('放弃未保存的 YAML 修改并重新读取？'))) return;
+                    await loadDocument(editingName);
+                    refreshProfiles(await profiles());
 				});
 			})
 		];
@@ -375,7 +370,7 @@ return view.extend({
 			E('p', {}, text(_('多域名证书使用 h2_sites 列表；与单域名 h2_site 二选一。证书和私钥不会回显，同域名再次保存会保留已有证书。'))),
 			editor, file, rawFeedback, E('div', { 'class': 'fsd-actions' }, configActions)
 		]);
-		setQuick(data[2]);
+		setQuick(data[1].editor);
 
 		var devices = scrollTable(), connections = scrollTable(), queries = scrollTable();
 		var logs = E('pre', { 'class': 'fsd-logs' });
@@ -468,45 +463,64 @@ return view.extend({
 
 
 		var profileState = data[3];
-		var profileSelect = E('select', { 'class': 'cbi-input-select', 'aria-label': _('配置方案') });
-		var profileName = E('input', { 'class': 'cbi-input-text', 'placeholder': _('新方案名称'), 'aria-label': _('新方案名称'), 'maxlength': '80' });
-		var profileBadge = E('strong', { 'class': 'fsd-profile-active' });
-		var profileFeedback = E('p', { 'role': 'status', 'class': 'fsd-editor-feedback' });
-		function refreshProfiles(state) {
-			profileState = state;
-			profileBadge.textContent = _('当前方案：') + state.active;
-			profileSelect.replaceChildren(...state.names.map(function(name) { return E('option', {value: name}, name); }));
-			profileSelect.value = state.active;
-		}
+        var profileSelect = E('select', { 'class': 'cbi-input-select', 'aria-label': _('选择要编辑的 YAML 文件') });
+        var profileName = E('input', { 'class': 'cbi-input-text', 'placeholder': _('新文件名，例如 home.yaml'), 'aria-label': _('新文件名'), 'maxlength': '255' });
+        var profileBadge = E('strong', { 'class': 'fsd-profile-active', 'role': 'status', 'aria-live': 'polite' });
+        var profilePending = E('p', { 'class': 'fsd-profile-help', 'role': 'status' });
+        var profileFeedback = E('p', { 'role': 'status', 'class': 'fsd-editor-feedback' });
+        function showPendingProfile() {
+            profilePending.textContent = _('正在编辑：%s。保存只写文件，点击「应用此文件」才更新运行配置。').format(editingName);
+        }
+        async function loadDocument(name) {
+            var doc = await readDocument(name);
+            editingName = doc.name; fileRevision = doc.revision;
+            setYAML(doc.yaml); setQuick(doc.editor);
+            profileSelect.value = editingName; showPendingProfile();
+        }
+        profileSelect.addEventListener('change', async function() {
+            var selected = profileSelect.value;
+            try {
+                await runConfigAction(async function() {
+                    if (((quick && quick.isDirty()) || editor.value !== currentYAML) && !window.confirm(_('有未保存的修改，放弃后打开其他文件？'))) return;
+                    await loadDocument(selected);
+                });
+            } catch (error) { profileFeedback.textContent = error.message; }
+            finally { profileSelect.value = editingName; }
+        });
+        function refreshProfiles(state) {
+            profileState = state;
+            profileBadge.textContent = _('当前生效 YAML：') + state.active + (state.pending ? _('（文件有尚未应用的修改，运行中仍为上次应用的内容）') : '');
+            profileSelect.replaceChildren(...state.names.map(function(name) { return E('option', {value: name}, name); }));
+            profileSelect.value = editingName;
+            showPendingProfile();
+        }
 		async function manageProfile(action) {
 			return runConfigAction(async function() {
 				requireCleanForm();
 				if (!rawReady || editor.value !== currentYAML)
-					throw new Error(_('请先保存或放弃高级 YAML 草稿，再管理方案。'));
-				var name = action === 'switch' || action === 'delete' ? profileSelect.value : profileName.value.trim();
-				if (!name) throw new Error(_('请填写新方案名称。'));
-				if (action === 'delete' && !window.confirm(_('确定删除方案「%s」？').format(name))) return;
-				if (action === 'switch' && name !== profileState.active && !window.confirm(_('切换到「%s」？FSD 配置将立即生效，网络和热点设置保持不变。').format(name))) return;
+					throw new Error(_('请先保存或放弃高级 YAML 草稿，再管理 YAML 文件。'));
+				var name = action === 'switch' || action === 'delete' ? editingName : profileName.value.trim();
+				if (!name) throw new Error(_('请填写新文件名，例如 home.yaml。'));
+				if (action === 'delete' && !window.confirm(_('确定删除文件「%s」？').format(name))) return;
+				if (action === 'switch' && !window.confirm(_('应用已保存的「%s」？运行配置将热更新。').format(name))) return;
 				profileFeedback.textContent = _('正在处理…');
 				try {
-					var updated = await profileAction(JSON.stringify({action: action, name: name, source: profileSelect.value, active: profileState.active}));
+					var updated = await profileAction(JSON.stringify({action: action, name: name, source: editingName, active: profileState.active, revision: fileRevision}));
 					refreshProfiles(updated);
 					profileName.value = '';
-					var fresh = await Promise.all([config(), readEditor()]);
-					setYAML(fresh[0].yaml); setQuick(fresh[1]);
+					await loadDocument(action === 'rename' ? name : action === 'delete' ? updated.active : editingName);
 					profileFeedback.textContent = _('操作完成，当前使用「%s」。').format(updated.active);
 				} catch (error) {
-					profileFeedback.textContent = error.message + _(' 如连接曾中断，请重新读取配置确认当前方案。');
+					profileFeedback.textContent = error.message + _(' 如连接曾中断，请重新读取配置确认当前文件。');
 					throw error;
 				}
 			});
 		}
 		var profileControls = E('fieldset', { 'class': 'fsd-profile-controls' }, [
-			E('div', { 'class': 'fsd-profile-heading' }, [E('h3', {}, _('配置方案')), profileBadge]),
-			E('p', { 'class': 'fsd-profile-help' }, _('每套方案独立保存。编辑后保存到当前方案；另存不会自动切换。证书等外部文件共用。')),
-			E('div', { 'class': 'fsd-profile-picker' }, [profileSelect, button(_('切换并应用'), function() { return manageProfile('switch'); }, !canEdit)]),
+			E('div', { 'class': 'fsd-profile-heading' }, [E('h3', {}, _('编辑 YAML 文件'))]),
+			E('p', { 'class': 'fsd-profile-help' }, _('选择文件即可编辑，无需先应用。保存只写入所选文件；应用此文件才更新运行配置。注意：重启服务会读取当前生效文件的最新保存内容。证书等外部文件共用。')),
+			E('div', { 'class': 'fsd-profile-picker' }, [profileSelect, button(_('应用此文件'), function() { return manageProfile('switch'); }, !canEdit), button(_('导入 YAML 文件'), function() { file.click(); }, !canEdit)]),
 			E('div', { 'class': 'fsd-profile-picker' }, [profileName,
-				button(_('当前配置另存为'), function() { return manageProfile('save'); }, !canEdit),
 				button(_('复制所选'), function() { return manageProfile('copy'); }, !canEdit),
 				button(_('重命名所选'), function() { return manageProfile('rename'); }, !canEdit),
 				button(_('删除所选'), function() { return manageProfile('delete'); }, !canEdit)]),
@@ -599,14 +613,15 @@ return view.extend({
 		]);
 		var tabs = [configTab, yamlTab, monitorTab, diagnosticsTab];
 		var parent = E('div', { 'class': 'cbi-map fsd-view' }, [
-			E('link', { 'rel': 'stylesheet', 'href': L.resource('view/fsd/overview.css') }),
-			E('div', { 'class': 'fsd-page-heading' }, [E('h2', {}, 'FSD'), E('span', {}, _('网络服务与配置管理'))]), statusLine, profileControls,
+			E('link', { 'rel': 'stylesheet', 'href': L.resource('view/fsd/overview.css') + '?v=1.7.4' }),
+			E('div', { 'class': 'fsd-page-heading' }, [E('h2', {}, 'FSD'), E('span', {}, _('网络服务与配置管理'))]), statusLine, E('div', { 'class': 'fsd-active-file-banner' }, [profileBadge, profilePending]), profileControls,
 			E('div', { 'class': 'fsd-tabs' }, tabs)
 		]);
 		ui.tabs.initTabGroup(tabs);
 		poll.add(function() {
 			return Promise.all([
 				status().then(showStatus),
+                configBusy ? Promise.resolve() : profiles().then(function(state) { if (!configBusy) refreshProfiles(state); }),
 				monitorTab.getAttribute('data-tab-active') === 'true' ? showMonitor() : Promise.resolve()
 			]).catch(function(error) {
 				statusLine.textContent = error.message;
