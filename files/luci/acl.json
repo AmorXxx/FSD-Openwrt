@@ -14,7 +14,8 @@
           "editor",
           "profiles",
           "profile_document",
-          "installation"
+          "installation",
+          "logging"
         ]
       }
     },
@@ -25,7 +26,9 @@
           "block",
           "monitor_control",
           "save_editor",
-          "profile_action"
+          "profile_action",
+          "save_logging",
+          "test_logging"
         ]
       }
     }

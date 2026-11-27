@@ -12,6 +12,13 @@ import (
 func profileTestApp(t *testing.T) *application {
 	t.Helper()
 	app := scopeTestApp(t)
+	cfg := app.current.Load().config
+	rules, err := cfg.unifiedDNSRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.setDNSRules(rules)
+	app.current.Store(app.runtimeSettings(cfg, app.current.Load().tls))
 	data, _ := yaml.Marshal(app.current.Load().config)
 	if err := writePrivate(filepath.Join(app.dir, "config.yaml"), data); err != nil {
 		t.Fatal(err)
@@ -34,13 +41,13 @@ func TestProfileLifecycleAndRestart(t *testing.T) {
 	original, _ := os.ReadFile(app.profileFile(initial))
 	act("save", "工作.yaml", "")
 	cfg := app.current.Load().config
-	cfg.Routes = []customRoute{{Path: "/work", JSON: `{"work":true}`}}
+	cfg.Sites[0].Routes = []customRoute{{Path: "/work", JSON: `{"work":true}`}}
 	data, _ := yaml.Marshal(cfg)
 	if err := writePrivate(app.profileFile("工作.yaml"), data); err != nil {
 		t.Fatal(err)
 	}
 	act("switch", "工作.yaml", "")
-	if app.current.Load().Routes[0].Path != "/work" {
+	if app.current.Load().Sites[0].Routes[0].Path != "/work" {
 		t.Fatal("runtime not switched")
 	}
 	if err := app.initProfiles(); err != nil {
@@ -48,10 +55,10 @@ func TestProfileLifecycleAndRestart(t *testing.T) {
 	}
 	loaded, _ := os.ReadFile(filepath.Join(app.dir, "config.yaml"))
 	persisted, err := decodeConfig(loaded)
-	if err != nil || persisted.Routes[0].Path != "/work" {
+	if err != nil || persisted.Sites[0].Routes[0].Path != "/work" {
 		t.Fatal("restart lost selection", err)
 	}
-	cfg.Routes = []customRoute{{Path: "/saved", JSON: `{}`}}
+	cfg.Sites[0].Routes = []customRoute{{Path: "/saved", JSON: `{}`}}
 	if err := app.commitSettings(app.runtimeSettings(cfg, app.current.Load().tls), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +76,7 @@ func TestProfileLifecycleAndRestart(t *testing.T) {
 	}
 	act("delete", "副本.yaml", "")
 	act("switch", initial, "")
-	if app.current.Load().Routes[0].Path != "/a" {
+	if app.current.Load().Sites[0].Routes[0].Path != "/a" {
 		t.Fatal("original profile lost")
 	}
 }
@@ -118,7 +125,7 @@ func TestProfilePermissionsAndEditorIsolation(t *testing.T) {
 	if err := app.changeProfile(profileAction{Action: "switch", Name: "second.yaml", Active: active}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.saveEditor(editorUpdate{Revision: previous.Revision}); err == nil {
+	if _, err := app.testSaveEditor(editorUpdate{Revision: previous.Revision}); err == nil {
 		t.Fatal("old editor can overwrite new profile")
 	}
 	external := filepath.Join(t.TempDir(), "outside.yaml")

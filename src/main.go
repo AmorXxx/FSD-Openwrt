@@ -32,6 +32,7 @@ import (
 )
 
 type runtimeConfig struct {
+	ruleAP net.IP
 	config
 	tls          *tls.Certificate
 	records      map[string]net.IP
@@ -39,6 +40,7 @@ type runtimeConfig struct {
 }
 
 type application struct {
+	keylogs                                                *tlsKeylog
 	dir, lanDevice, apSection, dnsUpstream, modemInterface string
 	lanAddr                                                netip.Addr
 	lanPrefix                                              netip.Prefix
@@ -48,6 +50,10 @@ type application struct {
 	stationSupported                                       bool
 	firewallEnabled, guardEnabled                          bool
 	monitor                                                *monitor
+	requestLogs                                            *requestLog
+	eventUpload                                            *eventUploader
+	loggingMu                                              sync.RWMutex
+	uploadCancel                                           context.CancelFunc
 	current                                                atomic.Pointer[runtimeConfig]
 	update                                                 sync.Mutex
 }
@@ -61,7 +67,24 @@ func randomToken() string {
 }
 
 func (app *application) prepare(cfg config) (*runtimeConfig, error) {
-	// Keep a separate self-signed management certificate for LuCI/setup.
+	// Monitor mode has no business domain: reuse the existing local certificate
+	// without replacing it with a certificate for the monitor placeholder.
+	if cfg.MonitorOnly {
+		pair, err := tls.LoadX509KeyPair(filepath.Join(app.dir, "local.crt"), filepath.Join(app.dir, "local.key"))
+		if err == nil {
+			return app.runtimeSettings(cfg, &pair, map[string]*tls.Certificate{}), nil
+		}
+		for _, name := range []string{"local.crt", "local.key"} {
+			if _, e := os.Lstat(filepath.Join(app.dir, name)); !os.IsNotExist(e) {
+				return nil, err
+			}
+		}
+		generated, err := certificate(app.dir, cfg.primarySite(), app.lanAddr.AsSlice())
+		if err != nil {
+			return nil, err
+		}
+		return app.runtimeSettings(cfg, generated, map[string]*tls.Certificate{}), nil
+	}
 	if _, err := certificate(app.dir, siteConfig{Domain: cfg.primarySite().Domain}, app.lanAddr.AsSlice()); err != nil {
 		return nil, err
 	}
@@ -84,9 +107,12 @@ func (app *application) prepare(cfg config) (*runtimeConfig, error) {
 }
 
 func (app *application) runtimeSettings(cfg config, pair *tls.Certificate, certs ...map[string]*tls.Certificate) *runtimeConfig {
-	settings := &runtimeConfig{config: cfg, tls: pair, records: make(map[string]net.IP), certificates: map[string]*tls.Certificate{cfg.primarySite().Domain: pair}}
+	settings := &runtimeConfig{ruleAP: app.lanAddr.AsSlice(), config: cfg, tls: pair, records: make(map[string]net.IP), certificates: map[string]*tls.Certificate{cfg.primarySite().Domain: pair}}
 	if len(certs) > 0 {
 		settings.certificates = certs[0]
+	}
+	if cfg.MonitorOnly {
+		return settings
 	}
 	for _, site := range cfg.sites() {
 		settings.records[site.Domain] = app.lanAddr.AsSlice()
@@ -104,10 +130,13 @@ func (app *application) runtimeSettings(cfg config, pair *tls.Certificate, certs
 
 func (app *application) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	current := app.current.Load()
+	if current.MonitorOnly {
+		return nil, fmt.Errorf("业务 HTTPS 在仅监控模式下禁用")
+	}
 	if hello.ServerName == "" {
 		return current.tls, nil
 	}
-	if pair := current.certificates[domainName(hello.ServerName)]; pair != nil {
+	if pair := current.certificates[current.config.siteKey(hello.ServerName)]; pair != nil {
 		return pair, nil
 	}
 	return nil, fmt.Errorf("unconfigured HTTPS domain: %s", hello.ServerName)
@@ -136,8 +165,6 @@ func (app *application) replaceConfigLocked(data []byte) error {
 	if err != nil {
 		return err
 	}
-	previous := app.current.Load()
-	cfg.preserveCertificates(previous.config)
 	settings, err := app.prepare(cfg)
 	if err != nil {
 		return err
@@ -189,7 +216,7 @@ func (app *application) status() map[string]any {
 	}{}
 	_ = json.Unmarshal(device, &modem)
 	return map[string]any{
-		"ok": true, "uptime": time.Since(started).Truncate(time.Second).String(),
+		"event_upload": app.uploadStatus(), "ok": true, "uptime": time.Since(started).Truncate(time.Second).String(),
 		"upstream": actualUpstream(route, ipv6, modem.Device), "wan_ipv4": len(route) > 0, "wan_ipv6": len(ipv6) > 0,
 		"modem_registered": modem.Up, "modem_device": modem.Device, "modem_pending": modem.Pending,
 		"ap_ssid": uciGet("wireless." + app.apSection + ".ssid"), "ap_ip": app.lanAddr.String(), "station_supported": app.stationSupported,
@@ -198,40 +225,49 @@ func (app *application) status() map[string]any {
 
 func (app *application) publicSite(writer http.ResponseWriter, req *http.Request) {
 	current := app.current.Load()
-	if !app.scopedClient(current.Scope, req.RemoteAddr) {
+	if current.MonitorOnly || !app.scopedClient(current.Scope, req.RemoteAddr) {
 		http.NotFound(writer, req)
 		return
 	}
-	matched, found := matchingRoute(current.Routes, req.URL.Path)
+	siteKey := current.siteKey(escapedDomain(req.Host))
+	if siteKey == "" {
+		http.NotFound(writer, req)
+		return
+	}
+	var routes []customRoute
+	for _, site := range current.Sites {
+		if site.Domain == siteKey {
+			routes = site.Routes
+			break
+		}
+	}
+	matched, found := matchingRoute(routes, req.URL.Path)
 	if found {
+		req, finishBodyLog := app.traceRequestBody(req)
+		app.monitor.message(routeHitMessage(req, matched.Path, "开始读取请求体"))
+		app.recordRequest(req)
+		finishBodyLog()
+		if matched.ResponseMode == "close" {
+			action := "关闭连接"
+			if req.ProtoMajor == 2 {
+				action = "重置 HTTP/2 当前流"
+			}
+			app.monitor.message(routeHitMessage(req, matched.Path, action))
+			closeRequestConnection(writer, req)
+			return
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.Header().Set("Cache-Control", "no-store")
 		writer.Header().Set("X-Checksum", fmt.Sprintf("%x", md5.Sum([]byte(matched.JSON))))
-		_, _ = io.WriteString(writer, matched.JSON)
-		app.monitor.message("JSON 路由命中 " + matched.Path + " · " + escapedDomain(req.RemoteAddr))
+		n, err := io.WriteString(writer, matched.JSON)
+		action := fmt.Sprintf("返回 JSON（HTTP 200，已写入 %d 字节）", n)
+		if err != nil {
+			action = fmt.Sprintf("JSON 写入失败（已写入 %d 字节，错误=%q）", n, err.Error())
+		}
+		app.monitor.message(routeHitMessage(req, matched.Path, action))
 		return
 	}
-	switch req.URL.Path {
-	case "/":
-		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(writer, `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>随身 Wi‑Fi 服务</title><main><h1>随身 Wi‑Fi 服务</h1><ul><li><a href="/status">连接状态</a></li><li><a href="/headers">请求头</a></li></ul></main></html>`)
-	case "/status":
-		status := app.status()
-		delete(status, "ap_ssid")
-		responseJSON(writer, 200, status)
-	case "/headers":
-		responseJSON(writer, 200, req.Header)
-	case "/echo":
-		body, err := io.ReadAll(http.MaxBytesReader(writer, req.Body, 1024*1024))
-		if err != nil {
-			http.Error(writer, "request body too large", 413)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = writer.Write(body)
-	default:
-		http.NotFound(writer, req)
-	}
+	http.NotFound(writer, req)
 }
 
 func (app *application) admin(writer http.ResponseWriter, req *http.Request) {
@@ -255,6 +291,12 @@ func (app *application) admin(writer http.ResponseWriter, req *http.Request) {
 
 func (app *application) adminRoutes(writer http.ResponseWriter, req *http.Request, local bool) {
 	switch req.URL.Path {
+	case "/api/fsd/logging":
+		if !local {
+			http.Error(writer, "LuCI authentication required", 403)
+			return
+		}
+		app.loggingAPI(writer, req)
 	case "/api/status":
 		responseJSON(writer, 200, app.status())
 	case "/api/scan":
@@ -306,16 +348,12 @@ func (app *application) adminRoutes(writer http.ResponseWriter, req *http.Reques
 		writer.Header().Set("Content-Disposition", `attachment; filename="fsd-service.yaml"`)
 		_, _ = writer.Write(content)
 	case "/api/dns":
-		responseJSON(writer, 200, app.current.Load().DNS)
+		responseJSON(writer, 200, app.current.Load().DNSRules)
 	case "/api/h2site":
 		cfg := app.current.Load().publicConfig()
-		if len(cfg.Sites) == 0 {
-			responseJSON(writer, 200, cfg.Site)
-		} else {
-			responseJSON(writer, 200, cfg.Sites)
-		}
+		responseJSON(writer, 200, cfg.Sites)
 	case "/api/h2routes":
-		responseJSON(writer, 200, app.current.Load().Routes)
+		responseJSON(writer, 200, app.current.Load().Sites)
 	case "/api/log":
 		app.monitor.Lock()
 		logs := slices.Clone(app.monitor.logs)
@@ -400,7 +438,7 @@ func (app *application) adminRoutes(writer http.ResponseWriter, req *http.Reques
 			temporary = boundSnapshotRows(temporary, 3000)
 		}
 		status := map[string]any{"devices": clients, "connections": connections, "enabled": enabled,
-			"packet_capture": capture, "temporary_blocks": temporary, "connection_count": totalConnections}
+			"packet_capture": capture, "temporary_blocks": temporary, "connection_count": totalConnections, "event_upload": app.uploadStatus()}
 		responseJSON(writer, 200, status)
 	case "/api/mon/dns":
 		since, _ := strconv.ParseUint(req.URL.Query().Get("since"), 10, 64)
@@ -446,6 +484,8 @@ func (app *application) adminRoutes(writer http.ResponseWriter, req *http.Reques
 			app.monitor.enabled = true
 		case "disable":
 			app.monitor.enabled = false
+		case "clear_logs":
+			app.monitor.logs = nil
 		case "reset_perf":
 			app.monitor.events = nil
 			app.monitor.clients = make(map[string]clientDevice)
@@ -559,7 +599,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if printGuard {
-		_, _ = os.Stdout.Write(app.guardFile(cfg.Scope))
+		_, _ = os.Stdout.Write(app.guardFile(cfg.Scope, cfg.MonitorOnly))
 		return
 	}
 	settings, err := app.prepare(cfg)
@@ -567,6 +607,10 @@ func main() {
 		log.Fatal(err)
 	}
 	app.current.Store(settings)
+	app.eventUpload, err = loadEventUploader(app.dir)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if check {
 		if !noFilter {
 			if err := app.installFilter(true); err != nil {
@@ -574,6 +618,21 @@ func main() {
 			}
 		}
 		return
+	}
+	if app.eventUpload != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		app.uploadCancel = cancel
+		go app.eventUpload.run(ctx)
+	}
+	loggingConfig, err := readLoggingSettings(app.dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	app.keylogs = newTLSKeylog("/tmp/fsd/tls-keylogs")
+	app.keylogs.setEnabled(loggingConfig.TLSKeylog)
+	go app.keylogs.run(context.Background())
+	if *loggingConfig.LocalCSV {
+		app.requestLogs = &requestLog{dir: filepath.Join(app.dir, "request-logs"), limit: 100 * 1024 * 1024}
 	}
 	if luci {
 		if err := app.startLocalAdministration(); err != nil {
@@ -623,12 +682,30 @@ func main() {
 		endpoints = append(endpoints, httpsEndpoint{app.adminPort, app.admin})
 	}
 	for _, endpoint := range endpoints {
+		tracker := &tlsEventLog{names: make(map[string]string), app: &app, output: log.Writer()}
 		server := &http.Server{
 			Addr: net.JoinHostPort(listen, strconv.Itoa(endpoint.port)), Handler: endpoint.handler,
 			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second,
 			MaxHeaderBytes: 32768,
+			ConnContext:    requestConnectionContext,
 			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12,
-				GetCertificate: app.getCertificate},
+				GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+					if endpoint.port == app.adminPort && app.current.Load().MonitorOnly {
+						return app.current.Load().tls, nil
+					}
+					if endpoint.port == app.sitePort {
+						tracker.hello(hello.Conn, hello.ServerName)
+					}
+					return app.getCertificate(hello)
+				}},
+		}
+		if endpoint.port == app.sitePort {
+			server.TLSConfig.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+				return keylogTLSConfig(server.TLSConfig, app.current.Load(), hello.Conn.RemoteAddr().String(), app.keylogs), nil
+			}
+			server.ConnContext = tracker.connection
+			server.ConnState = tracker.state
+			server.ErrorLog = log.New(tracker, "", 0)
 		}
 		listener, err := net.Listen("tcp", server.Addr)
 		if err != nil {

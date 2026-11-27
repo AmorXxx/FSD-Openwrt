@@ -12,7 +12,7 @@ SERVICE
 chmod 755 /etc/init.d/legacy-fsd
 printf 'private-business-config\n' > /etc/legacy-fsd/profiles/default.yaml
 ln -s profiles/default.yaml /etc/legacy-fsd/config.yaml
-printf '192.168.50.1/24\n' > /etc/legacy-fsd/lan-prefix
+printf '192.0.2.1/24\n' > /etc/legacy-fsd/lan-prefix
 printf 'private-certificate\n' > /etc/legacy-fsd/local.crt
 printf 'reference=/etc/legacy-fsd/local.crt\n' > /etc/config/uhttpd
 sha256sum /etc/legacy-fsd/config.yaml /etc/legacy-fsd/local.crt /etc/config/uhttpd > /tmp/preserve.sha

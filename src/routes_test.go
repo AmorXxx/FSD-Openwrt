@@ -7,12 +7,12 @@ import (
 )
 
 func TestSingleSegmentWildcardResponses(t *testing.T) {
-	cfg := config{Version: 1, Site: siteConfig{Domain: "site.home.arpa"}, Routes: []customRoute{
+	cfg := withTestRoutes(config{Version: 1, Sites: []siteConfig{{Domain: "site.home.arpa"}}}, []customRoute{
 		{Path: "/*/*/a", JSON: `{"rule":"broad"}`},
 		{Path: "/b/*/a", JSON: `{"rule":"segment"}`},
 		{Path: "/b/fixed/a", JSON: `{"rule":"exact"}`},
 		{Path: "/a", JSON: `{"rule":"plain"}`},
-	}}
+	})
 	app := testApp(t, cfg)
 	for _, tc := range []struct {
 		path, rule string
@@ -71,15 +71,49 @@ func TestWildcardPrecedenceAndDiagnostics(t *testing.T) {
 
 func TestWildcardPatternValidation(t *testing.T) {
 	for _, path := range []string{"/b/*/a", "/*", "/*/*", "/b/*/a/", "/a"} {
-		cfg := config{Version: 1, Site: siteConfig{Domain: "site.home.arpa"}, Routes: []customRoute{{Path: path, JSON: `{}`}}}
+		cfg := withTestRoutes(config{Version: 1, Sites: []siteConfig{{Domain: "site.home.arpa"}}}, []customRoute{{Path: path, JSON: `{}`}})
 		if err := cfg.validate(); err != nil {
 			t.Errorf("valid pattern %q: %v", path, err)
 		}
 	}
 	for _, path := range []string{"/b/**/a", "/b/pre*/a", "/b/*post/a", "/b/a*b/a", "/b//a", "/b/%2a/a"} {
-		cfg := config{Version: 1, Site: siteConfig{Domain: "site.home.arpa"}, Routes: []customRoute{{Path: path, JSON: `{}`}}}
+		cfg := withTestRoutes(config{Version: 1, Sites: []siteConfig{{Domain: "site.home.arpa"}}}, []customRoute{{Path: path, JSON: `{}`}})
 		if err := cfg.validate(); err == nil {
 			t.Errorf("invalid pattern accepted: %q", path)
 		}
+	}
+}
+
+func TestCatchAllRoutePrecedence(t *testing.T) {
+	routes := []customRoute{{Path: "*", JSON: `{"rule":"fallback"}`}, {Path: "/*/*", JSON: `{"rule":"segments"}`}, {Path: "/a/b", JSON: `{"rule":"exact"}`}}
+	app := scopeTestApp(t)
+	cfg := app.current.Load().config
+	cfg.Sites[0].Routes = routes
+	if err := cfg.validate(); err != nil {
+		t.Fatal(err)
+	}
+	app.current.Store(app.runtimeSettings(cfg, app.current.Load().tls))
+	for _, tc := range []struct{ path, want string }{{"/", "*"}, {"/a", "*"}, {"/x/y", "/*/*"}, {"/a/b", "/a/b"}, {"/a/b/c", "*"}, {"/a/b/", "*"}, {"/status", "*"}} {
+		route, ok := matchingRoute(routes, tc.path)
+		if !ok || route.Path != tc.want {
+			t.Fatal("wrong precedence", tc.path, route)
+		}
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "https://site.home.arpa"+tc.path, nil)
+		req.RemoteAddr = "192.0.2.10:4321"
+		app.publicSite(w, req)
+		if w.Code != 200 || w.Body.String() != route.JSON {
+			t.Fatal("wrong response", tc.path, w.Code)
+		}
+	}
+	probe := diagnosticRoutePath("*", routes)
+	matched, ok := matchingRoute(routes, probe)
+	if !ok || matched.Path != "*" {
+		t.Fatal("catch-all diagnostic hit another route", probe)
+	}
+	// A deeper segment pattern wins even though it contains more stars.
+	route, _ := matchingRoute([]customRoute{{Path: "*"}, {Path: "/*/*/*"}}, "/a/b/c")
+	if route.Path != "/*/*/*" {
+		t.Fatal("fallback beat segment wildcard")
 	}
 }

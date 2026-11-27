@@ -19,7 +19,7 @@ import (
 func scopeTestApp(t *testing.T) *application {
 	t.Helper()
 	app := &application{dir: t.TempDir(), lanAddr: netip.MustParseAddr("192.0.2.1"), lanDevice: "br-lan", dnsPort: 53, resolverPort: 5355, sitePort: 443, adminPort: 8444, monitor: newMonitor()}
-	cfg := config{Version: 1, Site: siteConfig{Domain: "site.home.arpa"}, Scope: deviceScope{Mode: "selected", Addresses: []string{"192.0.2.10", "fd00::10"}}, Routes: []customRoute{{Path: "/a", JSON: `{"ok":true}`}}, Blacklist: dnsBlacklist{Block: []string{"blocked.example"}}}
+	cfg := withTestRoutes(config{Version: 1, Sites: []siteConfig{{Domain: "site.home.arpa"}}, Scope: deviceScope{Mode: "selected", Addresses: []string{"192.0.2.10", "fd00::10"}}, Blacklist: dnsBlacklist{Block: []string{"blocked.example"}}}, []customRoute{{Path: "/a", JSON: `{"ok":true}`}})
 	if err := cfg.validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -104,9 +104,12 @@ func TestDeviceScopeDNS(t *testing.T) {
 }
 func TestDeviceScopeEditor(t *testing.T) {
 	app := scopeTestApp(t)
+	cfg := app.current.Load().config
+	cfg.setDNSRules([]dnsRule{})
+	app.current.Store(app.runtimeSettings(cfg, app.current.Load().tls))
 	before := app.current.Load()
 	input := editorUpdate{Revision: snapshotForEditor(before.config).Revision, DNS: []dnsRecord{}, Routes: []editorRouteUpdate{{Path: "/a", Source: "/a"}}, Scope: &deviceScope{Mode: "selected", Addresses: []string{"192.0.2.20"}}}
-	saved, err := app.saveEditor(input)
+	saved, err := app.testSaveEditor(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,16 +121,16 @@ func TestDeviceScopeEditor(t *testing.T) {
 	if err != nil || !sameScope(loaded.Scope, saved.Scope) {
 		t.Fatal("scope not persisted")
 	}
-	if _, err = app.saveEditor(input); err == nil {
+	if _, err = app.testSaveEditor(input); err == nil {
 		t.Fatal("stale scope accepted")
 	}
 	input.Revision = saved.Revision
 	input.Scope = nil
-	if _, err = app.saveEditor(input); err != nil || app.current.Load().Scope.Mode != "selected" {
+	if _, err = app.testSaveEditor(input); err != nil || app.current.Load().Scope.Mode != "selected" {
 		t.Fatal("old client erased scope")
 	}
 	input.Scope = &deviceScope{Mode: "selected"}
-	if _, err = app.saveEditor(input); err == nil {
+	if _, err = app.testSaveEditor(input); err == nil {
 		t.Fatal("empty selected scope accepted")
 	}
 }

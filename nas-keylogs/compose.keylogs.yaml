@@ -1,0 +1,6 @@
+# Merge with an existing isolated SFTP service named "sftp".
+# /srv/sftp must be that service's chroot; set SFTP_DATA_DIR to its host data directory.
+services:
+  sftp:
+    volumes:
+      - ${SFTP_DATA_DIR:?Set SFTP_DATA_DIR to your SFTP data directory}/tls-keylogs:/srv/sftp/tls-keylogs

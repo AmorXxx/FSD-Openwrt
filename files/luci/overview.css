@@ -128,6 +128,10 @@
 	border-bottom: 1px solid var(--border-color, #d4d4d8);
 }
 
+.fsd-view .fsd-dns-row {
+ grid-template-columns: minmax(0, 2fr) minmax(8rem, 1fr) minmax(0, 1fr) auto;
+}
+
 .fsd-view .fsd-form-field {
 	display: grid;
 	min-width: 0;
@@ -414,3 +418,9 @@
 
 .fsd-view .fsd-active-file-banner { margin: 1rem 0; padding: 1rem; border: 2px solid #238c89; border-radius: 8px; background: #14808012; }
 .fsd-view .fsd-active-file-banner .fsd-profile-active { display: block; font-size: 1.15rem; overflow-wrap: anywhere; background: transparent; padding: 0; }
+
+.fsd-view .fsd-site-card {
+ display: grid; gap: .65rem; padding: 1rem; margin-block: .5rem;
+ border: 1px solid var(--border-color, #d4d4d8); border-radius: .5rem;
+}
+.fsd-view .fsd-site-card > button { justify-self: start; }

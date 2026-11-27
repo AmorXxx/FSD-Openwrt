@@ -67,24 +67,25 @@ func (app *application) editProfileDocument(input profileAction) (profileDocumen
 		if e != nil {
 			return doc, e
 		}
-		// Preserve omitted secrets from this file, never from the running file.
-		next.preserveCertificates(cfg)
 		cfg = next
 	case "write_editor":
 		u := input.Editor
-		if u == nil || u.DNS == nil || u.Routes == nil {
+		if u == nil || (u.DNS == nil && u.DNSRules == nil) || u.Sites == nil {
 			return doc, errors.New("缺少编辑内容")
 		}
 		if u.Revision != doc.Revision {
 			return doc, errors.New("编辑内容已过期，请重新读取")
 		}
-		routes, e := u.updatedRoutes(cfg.Routes)
+		sites, e := u.updatedSites(cfg.Sites)
 		if e != nil {
 			return doc, e
 		}
-		cfg.DNS, cfg.Routes = u.DNS, routes
+		cfg.DNS, cfg.Sites = u.DNS, sites
 		if u.Scope != nil {
 			cfg.Scope = *u.Scope
+		}
+		if u.DNSPassthrough != nil {
+			cfg.DNSPassthrough = append([]string{}, (*u.DNSPassthrough)...)
 		}
 		if u.Blacklist != nil {
 			if u.Blacklist.Block == nil || u.Blacklist.Allow == nil {
@@ -92,8 +93,20 @@ func (app *application) editProfileDocument(input profileAction) (profileDocumen
 			}
 			cfg.Blacklist = *u.Blacklist
 		}
+		if u.DNSRules != nil {
+			cfg.setDNSRules(*u.DNSRules)
+		}
 		if e = cfg.validate(); e != nil {
 			return doc, e
+		}
+		if u.Sites != nil {
+			for _, site := range cfg.Sites {
+				if site.Certificate != "" {
+					if _, e = customCertificate(site); e != nil {
+						return doc, e
+					}
+				}
+			}
 		}
 	default:
 		return doc, errors.New("未知文件编辑操作")

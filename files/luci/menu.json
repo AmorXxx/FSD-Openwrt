@@ -4,10 +4,25 @@
     "order": 45,
     "action": {
       "type": "view",
-      "path": "fsd/overview-v4"
+      "path": "fsd/overview-v16"
     },
     "depends": {
-      "acl": [ "luci-app-fsd" ]
+      "acl": [
+        "luci-app-fsd"
+      ]
+    }
+  },
+  "admin/services/fsd-logging": {
+    "title": "FSD 日志记录",
+    "order": 46,
+    "action": {
+      "type": "view",
+      "path": "fsd/logging-v2"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-fsd"
+      ]
     }
   }
 }

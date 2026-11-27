@@ -80,9 +80,10 @@ func runFSDRPC(args []string) {
 			"profiles":         struct{}{},
 			"profile_document": map[string]string{"name": ""},
 			"profile_action":   map[string]string{"draft": ""},
-			"save_editor":      map[string]string{"draft": ""},
-			"block":            map[string]string{"action": "", "domain": ""},
-			"monitor_control":  map[string]string{"action": ""},
+			"logging":          struct{}{}, "save_logging": map[string]string{"draft": ""}, "test_logging": map[string]string{"draft": ""},
+			"save_editor":     map[string]string{"draft": ""},
+			"block":           map[string]string{"action": "", "domain": ""},
+			"monitor_control": map[string]string{"action": ""},
 		})
 		return
 	}
@@ -135,6 +136,12 @@ func runFSDRPC(args []string) {
 	var data json.RawMessage
 	var err error
 	switch args[1] {
+	case "logging":
+		data, err = request("GET", "/api/fsd/logging", "", "")
+	case "save_logging":
+		data, err = request("PUT", "/api/fsd/logging", "application/json", input.Draft)
+	case "test_logging":
+		data, err = request("POST", "/api/fsd/logging", "application/json", input.Draft)
 	case "status":
 		data, err = request("GET", "/api/status", "", "")
 	case "config":

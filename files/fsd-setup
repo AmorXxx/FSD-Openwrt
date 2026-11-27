@@ -82,10 +82,12 @@ preflight() {
 health() {
 	read -r prefix < "$data/lan-prefix"
 	address=${prefix%/*}
-	checks="$(ubus call fsd checks '{"group":"https"}')" || return 1
+	group=https
+ if ubus call fsd profiles | grep -q '"monitor_only": true'; then group=dns; fi
+ checks="$(ubus call fsd checks "{\"group\":\"$group\"}")" || return 1
 	printf '%s' "$checks" | grep -q '"status": "pass"' || return 1
 	if printf '%s' "$checks" | grep -q '"status": "fail"'; then return 1; fi
-	curl -fsS --max-time 4 --cacert "$data/luci.crt" "https://$address:8444/luci-static/resources/view/fsd/overview-v2.js" >/dev/null &&
+	curl -fsS --max-time 4 --cacert "$data/luci.crt" "https://$address:8444/luci-static/resources/view/fsd/overview.css" >/dev/null &&
 	nft get element inet fw4 fsd_forward_ready '{ "br-lan" }' >/dev/null 2>&1 &&
 	ubus call fsd status | grep -q '"ok": true'
 }
@@ -101,6 +103,10 @@ enable)
 	mkdir -p "$state/baseline" "$data"
 	chmod 700 "$state" "$state/baseline" "$data"
 	[ -e "$data/config.yaml" ] || cp "$share/config.example.yaml" "$data/config.yaml"
+ if [ -f "$share/仅监控.yaml" ]; then
+  mkdir -p "$data/profiles"
+  [ -e "$data/profiles/仅监控.yaml" ] || [ -L "$data/profiles/仅监控.yaml" ] || cp "$share/仅监控.yaml" "$data/profiles/仅监控.yaml"
+ fi
 	/usr/sbin/fsd-service -lan "$prefix" -ap-section "$ap" -modem-interface "$modem" -check -luci
 	for cfg in dhcp firewall uhttpd; do cp -p "/etc/config/$cfg" "$state/baseline/$cfg"; done
 	rollback() {

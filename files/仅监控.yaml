@@ -1,0 +1,6 @@
+version: 1
+monitor_only: true
+device_scope:
+  mode: all
+  addresses: []
+dns_rules: []

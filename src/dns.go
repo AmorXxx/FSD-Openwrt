@@ -20,10 +20,17 @@ func suffixMatch(name, suffix string) bool {
 }
 
 func blockedName(name string, cfg config, temporary []string) bool {
+	if cfg.MonitorOnly {
+		return false
+	}
 	for _, rule := range temporary {
 		if suffixMatch(name, rule) {
 			return true
 		}
+	}
+	if cfg.DNSRules != nil {
+		r, ok := cfg.dnsRuleFor(name)
+		return ok && r.Action == "block"
 	}
 	for _, rule := range cfg.Blacklist.Allow {
 		if name == rule {
@@ -58,10 +65,10 @@ func (app *application) serveDNS(writer dns.ResponseWriter, query *dns.Msg) {
 	cfg := app.current.Load()
 	temporary := app.monitor.temporaryRules()
 	kind := "forwarded"
-	target := app.scopedClient(cfg.Scope, client)
+	target := !cfg.MonitorOnly && app.scopedClient(cfg.Scope, client)
 	if target && blockedName(name, cfg.config, temporary) {
 		kind, reply.Rcode = "blocked", dns.RcodeNameError
-	} else if address, ok := cfg.records[name]; ok && target && question.Qclass == dns.ClassINET {
+	} else if address, ok := cfg.dnsRecord(name); ok && target && question.Qclass == dns.ClassINET {
 		kind = "local"
 		reply.Authoritative = true
 		switch question.Qtype {
@@ -138,12 +145,15 @@ add rule inet fsd_service blocked_forward oifname "%s" ip6 saddr @blocked_ipv6 d
 			script += fmt.Sprintf("insert rule inet fsd_service blocked_forward oifname %q %s daddr != @%s return\n", app.lanDevice, family.proto, family.set)
 		}
 	}
+	if cfg.MonitorOnly {
+		script += fmt.Sprintf("insert rule inet fsd_service restrict_listeners meta l4proto tcp th dport %d reject with tcp reset\n", app.sitePort)
+	}
 	return script + app.blocklistScript(cfg)
 }
 func (app *application) installFilter(checkOnly bool) error {
 	script := app.filterScript(app.current.Load().config)
 	if app.guardEnabled && !checkOnly {
-		script += app.liveGuard(app.current.Load().Scope)
+		script += app.liveGuard(app.current.Load().Scope, app.current.Load().MonitorOnly)
 	}
 	return nftWithMode(script, checkOnly)
 }

@@ -19,6 +19,9 @@ func (app *application) checkForwardGuard(ctx context.Context) diagnosticResult 
 	if err != nil {
 		return checked(guardCheckName, false, "无法读取 fw4 运行规则，当前状态无法确认")
 	}
+	if app.current.Load().MonitorOnly {
+		return inspectMonitorGuard(data)
+	}
 	return inspectForwardGuard(data, app.lanDevice, app.current.Load().Scope)
 }
 
@@ -159,4 +162,35 @@ func forwardGuardRulesMatch(rules [][]map[string]any, lan string) bool {
 		reflect.DeepEqual(rules[1][:2], lanOutbound) &&
 		len(rules[1][2]) == 1 && hasCounter &&
 		reflect.DeepEqual(rules[1][3], map[string]any{"drop": nil})
+}
+
+// A monitor-mode guard must have no filtering or DNS bypass rules.
+func inspectMonitorGuard(data []byte) diagnosticResult {
+	var state struct {
+		Objects []struct {
+			Chain *struct {
+				Name, Type, Hook, Policy string
+				Priority                 int `json:"prio"`
+			}
+			Rule *struct{ Chain string }
+		} `json:"nftables"`
+	}
+	if json.Unmarshal(data, &state) != nil || state.Objects == nil {
+		return checked(guardCheckName, false, "无法解析仅监控模式规则")
+	}
+	guard, bypass := false, false
+	for _, o := range state.Objects {
+		if c := o.Chain; c != nil {
+			if c.Name == forwardGuardChain {
+				guard = c.Type == "filter" && c.Hook == "forward" && c.Priority == -20 && c.Policy == "accept"
+			}
+			if c.Name == "fsd_dns_bypass" {
+				bypass = c.Type == "nat" && c.Hook == "prerouting" && c.Priority == -110 && c.Policy == "accept"
+			}
+		}
+		if o.Rule != nil && (o.Rule.Chain == forwardGuardChain || o.Rule.Chain == "fsd_dns_bypass") {
+			return checked(guardCheckName, false, "仅监控模式仍存在保护或 DNS 绕过规则")
+		}
+	}
+	return checked(guardCheckName, guard && bypass, "仅监控模式：FSD 出网保护已解除，DNS 统一转发并记录")
 }

@@ -15,9 +15,10 @@ import (
 )
 
 type profileState struct {
-	Active  string   `json:"active"`
-	Names   []string `json:"names"`
-	Pending bool     `json:"pending"`
+	MonitorOnly bool     `json:"monitor_only"`
+	Active      string   `json:"active"`
+	Names       []string `json:"names"`
+	Pending     bool     `json:"pending"`
 }
 type profileAction struct {
 	Action   string        `json:"action"`
@@ -122,7 +123,7 @@ func (app *application) profilesState() (profileState, error) {
 	if err != nil {
 		return profileState{}, err
 	}
-	state := profileState{Active: active, Names: []string{}}
+	state := profileState{MonitorOnly: app.current.Load().MonitorOnly, Active: active, Names: []string{}}
 	for _, e := range entries {
 		name := e.Name()
 		if e.Type().IsRegular() && validProfile(name) {

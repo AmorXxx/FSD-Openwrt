@@ -62,7 +62,7 @@ if command -v apk >/dev/null; then
 			arch=$(apk --print-arch) || { echo 'Cannot read APK architecture' >&2; exit 1; }
 		fi
 		case "$arch" in aarch64_*) ;; *) echo "Unsupported APK architecture: $arch" >&2; exit 1 ;; esac
-		file="$base/dist/luci-app-fsd-1.7.4-r1_${arch}.apk"
+		file="$base/dist/luci-app-fsd-1.7.16-r1_${arch}.apk"
 	fi
 	[ -f "$file" ] || { echo "Missing package: $file" >&2; exit 1; }
 	migration_preflight
@@ -72,7 +72,7 @@ elif command -v opkg >/dev/null; then
 	if [ -z "$file" ]; then
 		arches=$(opkg print-architecture) || { echo 'Cannot read opkg architectures' >&2; exit 1; }
 		for arch in $(printf '%s\n' "$arches" | sort -k3,3nr | awk '$1 == "arch" && $2 ~ /^aarch64_[a-z0-9_-]+$/ {print $2}'); do
-			candidate="$base/dist/luci-app-fsd_1.7.4-1_${arch}.ipk"
+			candidate="$base/dist/luci-app-fsd_1.7.16-1_${arch}.ipk"
 			if [ -f "$candidate" ]; then file=$candidate; break; fi
 		done
 		[ -n "$file" ] || { echo 'No package matches the architectures accepted by opkg; obtain a matching build.' >&2; exit 1; }

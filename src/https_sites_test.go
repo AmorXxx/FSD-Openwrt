@@ -23,9 +23,7 @@ func testSite(t *testing.T, domain string) siteConfig {
 	if _, err := certificate(dir, siteConfig{Domain: domain}, net.ParseIP("127.0.0.1")); err != nil {
 		t.Fatal(err)
 	}
-	cert, _ := os.ReadFile(filepath.Join(dir, "local.crt"))
-	key, _ := os.ReadFile(filepath.Join(dir, "local.key"))
-	return siteConfig{Domain: domain, Certificate: string(cert), Key: string(key)}
+	return siteConfig{Domain: domain, Certificate: filepath.Join(dir, "local.crt"), Key: filepath.Join(dir, "local.key")}
 }
 
 func testApp(t *testing.T, cfg config) *application {
@@ -48,7 +46,7 @@ func testApp(t *testing.T, cfg config) *application {
 
 func TestSNICertificatesAndReload(t *testing.T) {
 	first, second := testSite(t, "one.home.arpa"), testSite(t, "two.home.arpa")
-	cfg := config{Version: 1, Sites: []siteConfig{first, second}, Routes: []customRoute{{Path: "/api/demo", JSON: `{"ok":true}`}}}
+	cfg := withTestRoutes(config{Version: 1, Sites: []siteConfig{first, second}}, []customRoute{{Path: "/api/demo", JSON: `{"ok":true}`}})
 	app := testApp(t, cfg)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -75,7 +73,11 @@ func TestSNICertificatesAndReload(t *testing.T) {
 	check := func(domain string, site siteConfig) {
 		t.Helper()
 		roots := x509.NewCertPool()
-		if !roots.AppendCertsFromPEM([]byte(site.Certificate)) {
+		certPEM, err := os.ReadFile(site.Certificate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !roots.AppendCertsFromPEM(certPEM) {
 			t.Fatal("invalid fixture")
 		}
 		conn, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{RootCAs: roots, ServerName: domain})
@@ -107,10 +109,10 @@ func TestSNICertificatesAndReload(t *testing.T) {
 	}
 	check(first.Domain, first)
 	check(second.Domain, replacement)
-	// Redacted round trip must retain per-domain secrets, even when list order changes.
+	// YAML round trip preserves file references, even when list order changes.
 	redacted := app.current.Load().publicConfig()
-	if redacted.Sites[0].Key != "" || app.current.Load().Sites[0].Key == "" {
-		t.Fatal("redaction mutated live config")
+	if redacted.Sites[0].Key != app.current.Load().Sites[0].Key || redacted.Sites[0].Key == "" {
+		t.Fatal("file reference missing from exported config")
 	}
 	redacted.Sites[0], redacted.Sites[1] = redacted.Sites[1], redacted.Sites[0]
 	body, _ = yaml.Marshal(redacted)
@@ -121,7 +123,7 @@ func TestSNICertificatesAndReload(t *testing.T) {
 	check(second.Domain, replacement)
 	// Editing routes must retain all SNI certificates.
 	snapshot := snapshotForEditor(app.current.Load().config)
-	_, err = app.saveEditor(editorUpdate{Revision: snapshot.Revision, DNS: []dnsRecord{}, Routes: []editorRouteUpdate{{Path: "/other", JSON: `{"changed":true}`}}})
+	_, err = app.testSaveEditor(editorUpdate{Revision: snapshot.Revision, DNS: []dnsRecord{}, Routes: []editorRouteUpdate{{Path: "/other", JSON: `{"changed":true}`}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestSNICertificatesAndReload(t *testing.T) {
 }
 
 func TestSiteValidationAndLegacy(t *testing.T) {
-	old := config{Version: 1, Site: siteConfig{Domain: "legacy.home.arpa"}}
+	old := config{Version: 1, Sites: []siteConfig{{Domain: "legacy.home.arpa"}}}
 	app := testApp(t, old)
 	if app.current.Load().records["legacy.home.arpa"] == nil {
 		t.Fatal("legacy DNS missing")
@@ -176,11 +178,11 @@ func TestSiteValidationAndLegacy(t *testing.T) {
 }
 
 func TestExactRoutePaths(t *testing.T) {
-	cfg := config{Version: 1, Site: siteConfig{Domain: "site.home.arpa"}, Routes: []customRoute{
+	cfg := withTestRoutes(config{Version: 1, Sites: []siteConfig{{Domain: "site.home.arpa"}}}, []customRoute{
 		{Path: "/api/demo", JSON: `{"match":"plain"}`},
 		{Path: "/API/demo", JSON: `{"match":"case"}`},
 		{Path: "/api/demo/", JSON: `{"match":"slash"}`},
-	}}
+	})
 	app := testApp(t, cfg)
 	for _, tc := range []struct {
 		path, body string
@@ -200,7 +202,7 @@ func TestExactRoutePaths(t *testing.T) {
 			t.Errorf("%s: %d %s", tc.path, r.Code, body)
 		}
 	}
-	cfg.Routes = append(cfg.Routes, customRoute{Path: "/api/demo", JSON: `{}`})
+	cfg.Sites[0].Routes = append(cfg.Sites[0].Routes, customRoute{Path: "/api/demo", JSON: `{}`})
 	if err := cfg.validate(); err == nil {
 		t.Fatal("duplicate exact route accepted")
 	}
@@ -221,5 +223,17 @@ func TestGeneratedSiteCertificatesRemainDistinct(t *testing.T) {
 		if !bytes.Equal(before.certificates[site.Domain].Certificate[0], next.certificates[site.Domain].Certificate[0]) {
 			t.Fatal("generated certificate changed on reload")
 		}
+	}
+}
+
+func TestOnlyH2SitesYAML(t *testing.T) {
+	for _, field := range []string{"h2_site: {domain: a.example}", "h2_site: {}", "h2_site: null", "<<: {h2_site: {domain: a.example}}"} {
+		if _, err := decodeConfig([]byte("version: 1\nh2_sites: [{domain: b.example}]\n" + field + "\n")); err == nil {
+			t.Fatal("accepted removed h2_site", field)
+		}
+	}
+	cfg, err := decodeConfig([]byte("version: 1\nh2_sites: [{domain: a.example}]\n"))
+	if err != nil || len(cfg.sites()) != 1 {
+		t.Fatal(err)
 	}
 }

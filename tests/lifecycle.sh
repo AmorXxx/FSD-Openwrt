@@ -8,7 +8,7 @@ for tool in fw4 nft iw conntrack; do
 done
 cat > /tmp/fsd-test/bin/ip <<'EOF'
 #!/bin/sh
-echo '    inet 192.168.50.1/24 scope global br-lan'
+echo '    inet 192.0.2.1/24 scope global br-lan'
 EOF
 cat > /tmp/fsd-test/bin/ubus <<'EOF'
 #!/bin/sh
@@ -48,8 +48,8 @@ config dnsmasq
  option port '53'
  option domain 'lan'
 config dhcp 'lan'
- list dhcp_option '6,192.168.50.2'
- list dhcp_option '42,192.168.50.3'
+ list dhcp_option '6,192.0.2.2'
+ list dhcp_option '42,192.0.2.3'
 EOF
 cat > /etc/config/firewall <<'EOF'
 config defaults
@@ -68,7 +68,7 @@ fsd-setup check
 fsd-setup enable
 [ -f /etc/fsd-package/active ]
 [ "$(uci get 'dhcp.@dnsmasq[0].port')" = 5355 ]
-[ "$(uci get dhcp.lan.dhcp_option)" = '42,192.168.50.3 6,192.168.50.1' ]
+[ "$(uci get dhcp.lan.dhcp_option)" = '42,192.0.2.3 6,192.0.2.1' ]
 [ "$(uci get uhttpd.main.listen_https)" = '0.0.0.0:8444' ]
 [ "$(uci get 'firewall.@defaults[0].flow_offloading')" = 0 ]
 sha256sum /etc/fsd/config.yaml /etc/fsd/local.key > /tmp/fsd-test/preserved.sha256
@@ -81,7 +81,7 @@ fsd-setup disable
 [ ! -e /etc/nftables.d/45-fsd-forward-guard.nft ]
 [ "$(uci get 'dhcp.@dnsmasq[0].port')" = 53 ]
 [ "$(uci get 'dhcp.@dnsmasq[0].domain')" = edited.lan ]
-[ "$(uci get dhcp.lan.dhcp_option)" = '6,192.168.50.2 42,192.168.50.3' ]
+[ "$(uci get dhcp.lan.dhcp_option)" = '6,192.0.2.2 42,192.0.2.3' ]
 [ "$(uci get uhttpd.main.listen_https)" = '0.0.0.0:443 [::]:443' ]
 [ "$(uci get 'firewall.@defaults[0].flow_offloading')" = 1 ]
 sha256sum -c /tmp/fsd-test/preserved.sha256

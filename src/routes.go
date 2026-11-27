@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// A star is supported only as an entire path segment.
+// A standalone star is the catch-all; other stars occupy one path segment.
 func validRoutePattern(pattern string) bool {
 	for _, segment := range strings.Split(pattern, "/") {
 		if strings.Contains(segment, "*") && segment != "*" {
@@ -16,6 +16,9 @@ func validRoutePattern(pattern string) bool {
 }
 
 func routeMatches(pattern, path string) bool {
+	if pattern == "*" {
+		return strings.HasPrefix(path, "/")
+	}
 	want, got := strings.Split(pattern, "/"), strings.Split(path, "/")
 	if len(want) != len(got) {
 		return false
@@ -32,7 +35,7 @@ func routeMatches(pattern, path string) bool {
 	return true
 }
 
-// Exact paths win, then patterns with fewer stars. Equal specificity keeps YAML order.
+// Exact paths win, then segment patterns, then catch-all. Ties keep YAML order.
 func matchingRoute(routes []customRoute, path string) (customRoute, bool) {
 	var selected customRoute
 	best, found := 0, false
@@ -41,6 +44,9 @@ func matchingRoute(routes []customRoute, path string) (customRoute, bool) {
 			continue
 		}
 		stars := strings.Count(route.Path, "*")
+		if route.Path == "*" {
+			stars = 1000
+		}
 		if !found || stars < best {
 			selected, best, found = route, stars, true
 		}
@@ -50,6 +56,16 @@ func matchingRoute(routes []customRoute, path string) (customRoute, bool) {
 
 // Exercise a real nonempty segment, avoiding exact/more-specific configured routes.
 func diagnosticRoutePath(pattern string, routes []customRoute) string {
+	if pattern == "*" {
+		depth := 1
+		for _, route := range routes {
+			if n := strings.Count(route.Path, "/") + 1; n > depth {
+				depth = n
+			}
+		}
+		return strings.Repeat("/fsd-check", depth)
+	}
+
 	literals := make(map[string]bool)
 	for _, route := range routes {
 		for _, segment := range strings.Split(route.Path, "/") {

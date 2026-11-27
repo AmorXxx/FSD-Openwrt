@@ -33,6 +33,7 @@ type protocolResult struct {
 	HTTPStatus int    `json:"http_status,omitempty"`
 	OK         bool   `json:"ok"`
 	Error      string `json:"error,omitempty"`
+	TLSOnly    bool   `json:"tls_only,omitempty"`
 }
 
 type diagnosticResult struct {
@@ -54,7 +55,7 @@ func skipped(name, detail string) diagnosticResult {
 }
 
 func diagnosticClient(version string, current *runtimeConfig) *http.Client {
-	return diagnosticSiteClient(version, current.primarySite().Domain, current.tls)
+	return diagnosticSiteClient(version, diagnosticSiteDomain(current, current.primarySite().Domain), current.tls)
 }
 
 func diagnosticSiteClient(version, domain string, pair *tls.Certificate) *http.Client {
@@ -89,10 +90,36 @@ func (app *application) diagnosticURL(path string) string {
 func (app *application) protocolProbe(ctx context.Context, current *runtimeConfig) []protocolResult {
 	result := make([]protocolResult, 0, 2)
 	for _, site := range current.sites() {
+		host := diagnosticSiteDomain(current, site.Domain)
 		for _, version := range []string{"h2", "http/1.1"} {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodHead, app.diagnosticURL("/"), nil)
+			req.Host = host
 			probe := protocolResult{Expected: version, Domain: site.Domain}
-			response, err := diagnosticSiteClient(version, site.Domain, current.certificates[site.Domain]).Do(req)
+			if route, found := matchingRoute(site.Routes, "/"); found && route.ResponseMode == "close" {
+				probe.TLSOnly = true
+				client := diagnosticSiteClient(version, host, current.certificates[site.Domain])
+				cfg := client.Transport.(*http.Transport).TLSClientConfig.Clone()
+				cfg.NextProtos = []string{version}
+				dialer := tls.Dialer{NetDialer: &net.Dialer{Timeout: 4 * time.Second}, Config: cfg}
+				conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(app.lanAddr.String(), strconv.Itoa(app.sitePort)))
+				if err != nil {
+					probe.Error = err.Error()
+				} else {
+					probe.Protocol = conn.(*tls.Conn).ConnectionState().NegotiatedProtocol
+					// An absent ALPN negotiation falls back to HTTP/1.1, never HTTP/2.
+					if probe.Protocol == "" && version == "http/1.1" {
+						probe.Protocol = "http/1.1"
+					}
+					probe.OK = probe.Protocol == version
+					if !probe.OK {
+						probe.Error = "TLS ALPN 协议与预期不符"
+					}
+					conn.Close()
+				}
+				result = append(result, probe)
+				continue
+			}
+			response, err := diagnosticSiteClient(version, host, current.certificates[site.Domain]).Do(req)
 			if err != nil {
 				probe.Error = err.Error()
 			} else {
@@ -102,7 +129,7 @@ func (app *application) protocolProbe(ctx context.Context, current *runtimeConfi
 				if response.ProtoMajor == 2 && response.TLS != nil && response.TLS.NegotiatedProtocol == "h2" {
 					probe.Protocol = "h2"
 				}
-				probe.OK = probe.Protocol == version && response.StatusCode == http.StatusOK
+				probe.OK = probe.Protocol == version && (response.StatusCode == http.StatusOK || response.StatusCode == http.StatusNotFound)
 				if !probe.OK {
 					probe.Error = "协议或响应与预期不符"
 				}
@@ -114,30 +141,41 @@ func (app *application) protocolProbe(ctx context.Context, current *runtimeConfi
 }
 
 func (app *application) checkRoutes(ctx context.Context, current *runtimeConfig) []diagnosticResult {
-	if len(current.Routes) == 0 {
+	if len(current.Sites) == 0 {
 		return []diagnosticResult{skipped("自定义 JSON 接口", "当前没有配置接口")}
 	}
 
-	client := diagnosticClient("h2", current)
-	results := make([]diagnosticResult, 0, len(current.Routes))
-	for _, route := range current.Routes {
-		name := "JSON " + route.Path
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, app.diagnosticURL(diagnosticRoutePath(route.Path, current.Routes)), nil)
-		response, err := client.Do(req)
-		if err != nil {
-			results = append(results, checked(name, false, err.Error()))
-			continue
+	results := []diagnosticResult{}
+	for _, site := range current.Sites {
+		host := diagnosticSiteDomain(current, site.Domain)
+		client := diagnosticSiteClient("h2", host, current.certificates[site.Domain])
+		if len(site.Routes) == 0 {
+			results = append(results, skipped(site.Domain, "当前站点没有配置接口"))
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, 8193))
-		response.Body.Close()
-		checksum := fmt.Sprintf("%x", md5.Sum(body))
-		ok := err == nil && response.StatusCode == http.StatusOK && bytes.Equal(body, []byte(route.JSON)) &&
-			response.Header.Get("Content-Type") == "application/json" && response.Header.Get("X-Checksum") == checksum
-		detail := "HTTP 200、JSON 正文和 X-Checksum 一致"
-		if !ok {
-			detail = fmt.Sprintf("HTTP %d，响应正文、类型或校验值与配置不一致", response.StatusCode)
+		for _, route := range site.Routes {
+			name := "JSON " + site.Domain + " " + route.Path
+			if route.ResponseMode == "close" {
+				results = append(results, skipped(name, "记录后终止请求模式：不执行 HTTP 200/JSON 应答检查"))
+				continue
+			}
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, app.diagnosticURL(diagnosticRoutePath(route.Path, site.Routes)), nil)
+			req.Host = host
+			response, err := client.Do(req)
+			if err != nil {
+				results = append(results, checked(name, false, err.Error()))
+				continue
+			}
+			body, err := io.ReadAll(io.LimitReader(response.Body, 8193))
+			response.Body.Close()
+			checksum := fmt.Sprintf("%x", md5.Sum(body))
+			ok := err == nil && response.StatusCode == http.StatusOK && bytes.Equal(body, []byte(route.JSON)) &&
+				response.Header.Get("Content-Type") == "application/json" && response.Header.Get("X-Checksum") == checksum
+			detail := "HTTP 200、JSON 正文和 X-Checksum 一致"
+			if !ok {
+				detail = fmt.Sprintf("HTTP %d，响应正文、类型或校验值与配置不一致", response.StatusCode)
+			}
+			results = append(results, checked(name, ok, detail))
 		}
-		results = append(results, checked(name, ok, detail))
 	}
 	return results
 }
@@ -176,14 +214,20 @@ func (app *application) checkDNS(ctx context.Context, current *runtimeConfig) []
 	temporary := app.monitor.temporaryRules()
 	var results []diagnosticResult
 	for _, site := range current.sites() {
+		host := diagnosticSiteDomain(current, site.Domain)
+		if current.passthroughDNS(host) && !blockedName(host, current.config, temporary) {
+			results = append(results, skipped("DNS · "+site.Domain, "测试域名命中 DNS 直通例外，使用上游解析结果，不校验固定 IP"))
+			continue
+		}
 		for _, transport := range []string{"udp", "tcp"} {
 			name := "DNS " + strings.ToUpper(transport) + " · " + site.Domain
-			reply, err := app.diagnosticDNS(ctx, transport, site.Domain)
+			reply, err := app.diagnosticDNS(ctx, transport, host)
 			code := dns.RcodeSuccess
-			if blockedName(site.Domain, current.config, temporary) {
+			if blockedName(host, current.config, temporary) {
 				code = dns.RcodeNameError
 			}
-			results = append(results, checkDNSResponse(name, reply, err, code, current.records[site.Domain]))
+			expectedIP, _ := current.dnsRecord(host)
+			results = append(results, checkDNSResponse(name, reply, err, code, expectedIP))
 		}
 	}
 	if blockedName(diagnosticPublicName, current.config, temporary) {
@@ -193,8 +237,17 @@ func (app *application) checkDNS(ctx context.Context, current *runtimeConfig) []
 		results = append(results, checkDNSResponse("公网 DNS 转发", reply, err, dns.RcodeSuccess, nil))
 	}
 	const testName = "DNS 黑名单"
+	if current.MonitorOnly {
+		return append(results, skipped(testName, "仅监控模式不执行黑名单，包括临时规则"))
+	}
 	replace := strings.NewReplacer("*", "fsd-check", "?", "a")
-	for _, rule := range append(slices.Clone(temporary), current.Blacklist.Block...) {
+	blockRules := append(slices.Clone(temporary), current.Blacklist.Block...)
+	for _, r := range current.DNSRules {
+		if r.Action == "block" {
+			blockRules = append(blockRules, r.Name)
+		}
+	}
+	for _, rule := range blockRules {
 		domain := replace.Replace(rule)
 		if validDomain(domain, false) && blockedName(domain, current.config, temporary) {
 			reply, err := app.diagnosticDNS(ctx, "udp", domain)
@@ -352,11 +405,17 @@ func (app *application) runDiagnostics(parent context.Context, group string) ([]
 	tests := map[string]diagnostic{
 		"guard": func() []diagnosticResult { return []diagnosticResult{app.checkForwardGuard(ctx)} },
 		"https": func() []diagnosticResult {
+			if current.MonitorOnly {
+				return []diagnosticResult{skipped("业务 HTTPS", "仅监控模式已禁用")}
+			}
 			var results []diagnosticResult
 			for _, probe := range app.protocolProbe(ctx, current) {
 				detail := probe.Error
 				if probe.OK {
 					detail = fmt.Sprintf("%s · HTTP %d", probe.Protocol, probe.HTTPStatus)
+					if probe.TLSOnly {
+						detail = probe.Protocol + " · TLS/ALPN 验证通过；终止请求模式未检查 HTTP 应答"
+					}
 				}
 				results = append(results, checked(probe.Domain+" · "+probe.Expected, probe.OK, detail))
 			}

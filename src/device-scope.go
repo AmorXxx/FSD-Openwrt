@@ -90,7 +90,10 @@ func scopeSets(s deviceScope, table, prefix string) string {
 	}
 	return out.String()
 }
-func (app *application) guardRules(s deviceScope) []string {
+func (app *application) guardRules(s deviceScope, monitorOnly ...bool) []string {
+	if len(monitorOnly) > 0 && monitorOnly[0] {
+		return nil
+	}
 	var rules []string
 	if s.Mode == "selected" {
 		rules = append(rules, "ip saddr != @fsd_devices4 return", "ip6 saddr != @fsd_devices6 return")
@@ -98,7 +101,10 @@ func (app *application) guardRules(s deviceScope) []string {
 	rules = append(rules, fmt.Sprintf("iifname %q oifname != %q iifname @fsd_forward_ready return", app.lanDevice, app.lanDevice), fmt.Sprintf("iifname %q oifname != %q counter drop", app.lanDevice, app.lanDevice))
 	return rules
 }
-func (app *application) bypassRules(s deviceScope) []string {
+func (app *application) bypassRules(s deviceScope, monitorOnly ...bool) []string {
+	if len(monitorOnly) > 0 && monitorOnly[0] {
+		return nil
+	}
 	if s.Mode != "selected" {
 		return nil
 	}
@@ -108,7 +114,7 @@ func (app *application) bypassRules(s deviceScope) []string {
 	}
 	return rules
 }
-func (app *application) guardFile(s deviceScope) []byte {
+func (app *application) guardFile(s deviceScope, monitorOnly ...bool) []byte {
 	var out strings.Builder
 	out.WriteString("# Generated from device_scope; do not edit.\nset fsd_forward_ready { type ifname; flags timeout; }\n")
 	for _, f := range []struct {
@@ -122,24 +128,24 @@ func (app *application) guardFile(s deviceScope) []byte {
 		out.WriteString(" }\n")
 	}
 	out.WriteString("chain fsd_forward_guard { type filter hook forward priority -20; policy accept;\n")
-	for _, r := range app.guardRules(s) {
+	for _, r := range app.guardRules(s, monitorOnly...) {
 		out.WriteString(r + "\n")
 	}
 	out.WriteString("}\n")
 	out.WriteString("chain fsd_dns_bypass { type nat hook prerouting priority -110; policy accept;\n")
-	for _, r := range app.bypassRules(s) {
+	for _, r := range app.bypassRules(s, monitorOnly...) {
 		out.WriteString(r + "\n")
 	}
 	out.WriteString("}\n")
 	return []byte(out.String())
 }
-func (app *application) liveGuard(s deviceScope) string {
+func (app *application) liveGuard(s deviceScope, monitorOnly ...bool) string {
 	out := scopeSets(s, "fw4", "fsd_devices") + "flush chain inet fw4 fsd_forward_guard\n"
-	for _, r := range app.guardRules(s) {
+	for _, r := range app.guardRules(s, monitorOnly...) {
 		out += "add rule inet fw4 fsd_forward_guard " + r + "\n"
 	}
 	out += "add chain inet fw4 fsd_dns_bypass { type nat hook prerouting priority -110; policy accept; }\nflush chain inet fw4 fsd_dns_bypass\n"
-	for _, r := range app.bypassRules(s) {
+	for _, r := range app.bypassRules(s, monitorOnly...) {
 		out += "add rule inet fw4 fsd_dns_bypass " + r + "\n"
 	}
 	return out
@@ -164,7 +170,7 @@ func (app *application) commitSettings(next *runtimeConfig, applyChanges func() 
 	if err != nil {
 		return err
 	}
-	scopeChanged := app.firewallEnabled && !sameScope(previous.Scope, next.Scope)
+	scopeChanged := app.firewallEnabled && (!sameScope(previous.Scope, next.Scope) || previous.MonitorOnly != next.MonitorOnly)
 	guard := "/etc/nftables.d/45-fsd-forward-guard.nft"
 	var oldGuard []byte
 	var script string
@@ -175,7 +181,7 @@ func (app *application) commitSettings(next *runtimeConfig, applyChanges func() 
 			if err != nil {
 				return err
 			}
-			script += app.liveGuard(next.Scope)
+			script += app.liveGuard(next.Scope, next.MonitorOnly)
 		}
 		if err = nftWithMode(script, true); err != nil {
 			return err
@@ -195,7 +201,7 @@ func (app *application) commitSettings(next *runtimeConfig, applyChanges func() 
 	}
 
 	if oldGuard != nil {
-		if err = writePrivate(guard, app.guardFile(next.Scope)); err != nil {
+		if err = writePrivate(guard, app.guardFile(next.Scope, next.MonitorOnly)); err != nil {
 			return err
 		}
 	}
@@ -213,7 +219,7 @@ func (app *application) commitSettings(next *runtimeConfig, applyChanges func() 
 			if scopeChanged {
 				back := app.filterScript(previous.config)
 				if app.guardEnabled {
-					back += app.liveGuard(previous.Scope)
+					back += app.liveGuard(previous.Scope, previous.MonitorOnly)
 				}
 				err = errors.Join(err, nft(back))
 			}

@@ -21,9 +21,9 @@ func TestSelectedFileEditsDoNotApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := original.config
-	cfg.Routes = []customRoute{{Path: "/offline", JSON: `{"n":9007199254740993}`}}
+	cfg.Sites[0].Routes = []customRoute{{Path: "/offline", JSON: `{"n":9007199254740993}`}}
 	data, _ := yaml.Marshal(cfg)
-	saved, err := app.editProfileDocument(profileAction{Action: "write_yaml", Name: name, Revision: doc.Revision, YAML: string(data)})
+	saved, err := app.testEditProfileDocument(profileAction{Action: "write_yaml", Name: name, Revision: doc.Revision, YAML: string(data)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,11 +38,11 @@ func TestSelectedFileEditsDoNotApply(t *testing.T) {
 	if !bytes.Equal(before, unchanged) {
 		t.Fatal("edited another file")
 	}
-	if _, err = app.editProfileDocument(profileAction{Action: "write_yaml", Name: name, Revision: doc.Revision, YAML: string(data)}); err == nil {
+	if _, err = app.testEditProfileDocument(profileAction{Action: "write_yaml", Name: name, Revision: doc.Revision, YAML: string(data)}); err == nil {
 		t.Fatal("stale overwrite accepted")
 	}
 	u := editorUpdate{Revision: saved.Revision, DNS: []dnsRecord{}, Routes: []editorRouteUpdate{{Path: "/renamed", Source: "/offline"}}}
-	saved, err = app.editProfileDocument(profileAction{Action: "write_editor", Name: name, Revision: saved.Revision, Editor: &u})
+	saved, err = app.testEditProfileDocument(profileAction{Action: "write_editor", Name: name, Revision: saved.Revision, Editor: &u})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +52,14 @@ func TestSelectedFileEditsDoNotApply(t *testing.T) {
 	if err = app.changeProfile(profileAction{Action: "switch", Name: name, Active: active}); err != nil {
 		t.Fatal(err)
 	}
-	if app.current.Load().Routes[0].Path != "/renamed" || app.current.Load().Routes[0].JSON != `{"n":9007199254740993}` {
+	if app.current.Load().Sites[0].Routes[0].Path != "/renamed" || app.current.Load().Sites[0].Routes[0].JSON != `{"n":9007199254740993}` {
 		t.Fatal("apply did not load selected file")
 	}
 	// Saving the active file still must not apply; explicitly apply the same filename.
 	runtime := app.current.Load()
 	u.Revision = saved.Revision
 	u.Routes = []editorRouteUpdate{{Path: "/later", Source: "/renamed"}}
-	_, err = app.editProfileDocument(profileAction{Action: "write_editor", Name: name, Revision: saved.Revision, Editor: &u})
+	_, err = app.testEditProfileDocument(profileAction{Action: "write_editor", Name: name, Revision: saved.Revision, Editor: &u})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestSelectedFileEditsDoNotApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, _ = app.profilesState()
-	if state.Pending || app.current.Load().Routes[0].Path != "/later" {
+	if state.Pending || app.current.Load().Sites[0].Routes[0].Path != "/later" {
 		t.Fatal("same-file apply failed")
 	}
 }
@@ -80,8 +80,7 @@ func TestFileEditorPreservesOwnCertificates(t *testing.T) {
 	app := profileTestApp(t)
 	active, _ := app.activeProfile()
 	cfg := app.current.Load().config
-	cfg.Site.Certificate = "/file-specific.crt"
-	cfg.Site.Key = "/file-specific.key"
+	cfg.Sites[0] = testSite(t, cfg.Sites[0].Domain)
 	data, _ := yaml.Marshal(cfg)
 	name := "certs.yaml"
 	if err := writePrivate(app.profileFile(name), data); err != nil {
@@ -91,14 +90,14 @@ func TestFileEditorPreservesOwnCertificates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains([]byte(doc.YAML), []byte("file-specific")) {
-		t.Fatal("export leaked certificates")
+	if !bytes.Contains([]byte(doc.YAML), []byte(cfg.Sites[0].Certificate)) {
+		t.Fatal("export omitted certificate path")
 	}
-	if _, err = app.editProfileDocument(profileAction{Action: "write_yaml", Name: name, Revision: doc.Revision, YAML: doc.YAML}); err != nil {
+	if _, err = app.testEditProfileDocument(profileAction{Action: "write_yaml", Name: name, Revision: doc.Revision, YAML: doc.YAML}); err != nil {
 		t.Fatal(err)
 	}
 	_, saved, err := app.readProfileDocument(name)
-	if err != nil || saved.Site.Certificate != cfg.Site.Certificate || saved.Site.Key != cfg.Site.Key {
+	if err != nil || saved.Sites[0].Certificate != cfg.Sites[0].Certificate || saved.Sites[0].Key != cfg.Sites[0].Key {
 		t.Fatal("lost selected file certificates", err)
 	}
 	now, _ := app.activeProfile()

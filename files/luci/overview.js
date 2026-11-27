@@ -3,7 +3,7 @@
 'require rpc';
 'require ui';
 'require poll';
-'require view.fsd.config-editor-v4 as configEditor';
+'require view.fsd.config-editor-v13 as configEditor';
 
 // Keep device-local wall time; hide the offset without converting to browser time.
 function deviceTime(value) {
@@ -367,7 +367,7 @@ return view.extend({
 		];
 		var rawControls = E('fieldset', { 'class': 'fsd-form-controls' }, [
 			E('label', { 'for': 'fsd-config' }, text(_('服务配置（YAML）'))),
-			E('p', {}, text(_('多域名证书使用 h2_sites 列表；与单域名 h2_site 二选一。证书和私钥不会回显，同域名再次保存会保留已有证书。'))),
+			E('p', {}, text(_('HTTPS 站点统一使用 h2_sites 列表，单域名也填写一项。*.a.com 匹配任意层级子域名，但证书 *.a.com 本身只覆盖一层；多级域名仍需相应证书 SAN。cert 和 key 只接受设备上的绝对文件路径，路径会回显并保留，不接受 PEM 文本。'))),
 			editor, file, rawFeedback, E('div', { 'class': 'fsd-actions' }, configActions)
 		]);
 		setQuick(data[1].editor);
@@ -375,6 +375,7 @@ return view.extend({
 		var devices = scrollTable(), connections = scrollTable(), queries = scrollTable();
 		var logs = E('pre', { 'class': 'fsd-logs' });
 		var monitorLine = E('p', { 'role': 'status' });
+ var uploadLine = E('p', { 'role': 'status' });
 		var list = E('p');
 		var domain = E('input', {
 			'id': 'fsd-domain', 'type': 'text', 'class': 'cbi-input-text',
@@ -412,8 +413,11 @@ return view.extend({
 				}));
 		}
 
+		var monitorRefresh = 0;
 		async function showMonitor() {
+			var refresh = ++monitorRefresh;
 			var sample = await monitor();
+			if (refresh !== monitorRefresh) return;
 			latestSample = sample;
 			var live = sample.live || {};
 			var perSecond = function(value) { return units(value) + '/s'; };
@@ -423,6 +427,8 @@ return view.extend({
 				live.connection_count > (live.connections || []).length ?
 					_('显示最近活动的 %d / %d 条连接').format(live.connections.length, live.connection_count) : ''
 			].filter(Boolean).join(' · ');
+			var upload = live.event_upload || {};
+ uploadLine.textContent = upload.enabled ? _('NAS 日志：已入库 %s · 待传 %s · 内存 %s / %s · 丢失 %s · 重试 %s').format(upload.uploaded, upload.queued + (upload.inflight ? 1 : 0), units(upload.buffer_bytes), units(upload.buffer_limit), upload.dropped, upload.retries) + (upload.last_error ? ' · ' + upload.last_error : '') : (upload.local_csv ? _('请求日志：本地 CSV 已开启，NAS 上传已关闭') : _('请求日志：本地 CSV 与 NAS 上传均已关闭'));
 			list.textContent = (live.temporary_blocks || []).join('，') || _('暂无临时规则');
 			table(devices, [ _('地址'), 'MAC', _('主机名'), _('上行 / 下行'), _('速率'), 'DNS' ],
 				(live.devices || []).map(function(item) {
@@ -442,7 +448,7 @@ return view.extend({
 		renderMonitorTables();
 
 		var monitorTab = tab('monitor', _('监控'), [
-			monitorLine,
+			monitorLine, uploadLine,
 			E('div', { 'class': 'fsd-actions' }, [
 				button(_('开启记录'), async function() { await monitorControl('enable'); await showMonitor(); }, !canWrite),
 				button(_('暂停记录'), async function() { await monitorControl('disable'); await showMonitor(); }, !canWrite),
@@ -458,7 +464,16 @@ return view.extend({
 				button(_('加入'), async function() { await block('add', domain.value); await showMonitor(); }, !canWrite),
 				button(_('移除'), async function() { await block('del', domain.value); await showMonitor(); }, !canWrite)
 			]),
-			list, E('h3', {}, text(_('实时日志（设备系统时区）'))), logs
+			list, E('h3', {}, text(_('实时日志（设备系统时区）'))),
+            E('div', { 'class': 'fsd-actions' }, [
+                button(_('清理日志'), async function() {
+                    await monitorControl('clear_logs');
+                    ++monitorRefresh;
+                    logs.textContent = _('暂无日志');
+                    await showMonitor();
+                }, !canWrite)
+            ]),
+            E('p', { 'class': 'fsd-muted' }, text(_('清空页面运行日志，新日志会继续显示；不清理系统日志、CSV、数据库记录、TLS 密钥或抓包文件。'))), logs
 		]);
 
 
@@ -489,7 +504,7 @@ return view.extend({
         });
         function refreshProfiles(state) {
             profileState = state;
-            profileBadge.textContent = _('当前生效 YAML：') + state.active + (state.pending ? _('（文件有尚未应用的修改，运行中仍为上次应用的内容）') : '');
+            profileBadge.textContent = _('当前生效 YAML：') + state.active + (state.monitor_only ? _(' · 仅监控：DNS 正常转发，临时黑名单不生效，业务 HTTPS 已禁用') : '') + (state.pending ? _('（文件有尚未应用的修改，运行中仍为上次应用的内容）') : '');
             profileSelect.replaceChildren(...state.names.map(function(name) { return E('option', {value: name}, name); }));
             profileSelect.value = editingName;
             showPendingProfile();
@@ -613,7 +628,7 @@ return view.extend({
 		]);
 		var tabs = [configTab, yamlTab, monitorTab, diagnosticsTab];
 		var parent = E('div', { 'class': 'cbi-map fsd-view' }, [
-			E('link', { 'rel': 'stylesheet', 'href': L.resource('view/fsd/overview.css') + '?v=1.7.4' }),
+			E('link', { 'rel': 'stylesheet', 'href': L.resource('view/fsd/overview.css') + '?v=1.7.16' }),
 			E('div', { 'class': 'fsd-page-heading' }, [E('h2', {}, 'FSD'), E('span', {}, _('网络服务与配置管理'))]), statusLine, E('div', { 'class': 'fsd-active-file-banner' }, [profileBadge, profilePending]), profileControls,
 			E('div', { 'class': 'fsd-tabs' }, tabs)
 		]);

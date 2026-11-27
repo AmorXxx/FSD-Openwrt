@@ -1,0 +1,114 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: fsd-mysql
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: fsd_logs
+      MYSQL_USER: fsd_ingest
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_ingest_password
+      MYSQL_ROOT_HOST: 192.168.1.0/255.255.255.0
+    secrets:
+    - mysql_root_password
+    - mysql_ingest_password
+    - mysql_tls_ca
+    - mysql_tls_cert
+    - mysql_tls_key
+    entrypoint:
+    - /bin/sh
+    - /opt/fsd/mysql-entrypoint.sh
+    volumes:
+    - mysql_data:/var/lib/mysql
+    - ./initdb:/docker-entrypoint-initdb.d:ro
+    - ./mysql-entrypoint.sh:/opt/fsd/mysql-entrypoint.sh:ro
+    command:
+    - --character-set-server=utf8mb4
+    - --collation-server=utf8mb4_0900_ai_ci
+    - --default-time-zone=+08:00
+    - --max-allowed-packet=256M
+    - --innodb-buffer-pool-size=256M
+    - --max-connections=30
+    - --skip-log-bin
+    - --require-secure-transport=OFF
+    - --ssl-ca=/run/fsd-mysql-tls/ca.crt
+    - --ssl-cert=/run/fsd-mysql-tls/server.crt
+    - --ssl-key=/run/fsd-mysql-tls/server.key
+    - --bind-address=127.0.0.1,${MYSQL_LAN_IP:?Run prepare.sh with NAS LAN IP}
+    - --port=13306
+    - --mysqlx=0
+    mem_limit: 1g
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - MYSQL_PWD="$$(cat /run/secrets/mysql_root_password)" mysql --protocol=socket
+        -uroot --database=fsd_logs --execute="SELECT event_id FROM fsd_request_events
+        LIMIT 0" >/dev/null 2>&1
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    network_mode: host
+  receiver:
+    build: ./receiver
+    image: fsd-log-receiver:1.0
+    container_name: fsd-log-receiver
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '13306'
+      DEVICE_ID: mu300
+      LISTEN_HOST: 127.0.0.1
+      LISTEN_PORT: '18080'
+    secrets:
+    - mysql_ingest_password
+    - mysql_tls_ca
+    - upload_token
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 1g
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/healthz',
+        timeout=3)
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    network_mode: host
+secrets:
+  upload_token:
+    file: ./secrets/upload_token.txt
+  mysql_root_password:
+    file: ./secrets/mysql_root_password.txt
+  mysql_ingest_password:
+    file: ./secrets/mysql_ingest_password.txt
+  mysql_tls_ca:
+    file: ./secrets/tls/ca.crt
+  mysql_tls_cert:
+    file: ./secrets/tls/server.crt
+  mysql_tls_key:
+    file: ./secrets/tls/server.key
+volumes:
+  mysql_data:
+    name: fsd_mysql_data

@@ -5,6 +5,10 @@ for cache in /tmp/luci-indexcache /tmp/luci-indexcache.*; do
 	[ ! -f "$cache" ] || rm -f "$cache"
 done
 /etc/init.d/rpcd reload || true
+if [ -d /etc/fsd ] && [ -f /usr/share/fsd/仅监控.yaml ]; then
+ (umask 077; mkdir -p /etc/fsd/profiles
+  [ -e /etc/fsd/profiles/仅监控.yaml ] || [ -L /etc/fsd/profiles/仅监控.yaml ] || cp /usr/share/fsd/仅监控.yaml /etc/fsd/profiles/仅监控.yaml)
+fi
 if [ -f /etc/fsd-package/active ]; then
 	/etc/init.d/fsd-service enable
 	/etc/init.d/fsd-service restart
