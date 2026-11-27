@@ -54,7 +54,7 @@ cp secrets/tls/ca.crt client/mysql-ca.crt
 chmod 644 client/mysql-ca.crt
 cp secrets/upload_token.txt client/upload-token
 chmod 600 client/upload-token
-printf '{\n  "enabled": true,\n  "endpoint": "https://%s:5001/v1/events",\n  "device_id": "mu300",\n  "token_file": "/etc/fsd/upload-token"\n}\n' "$host" > client/event-upload.json
+printf '{\n  "enabled": false,\n  "local_csv": false,\n  "endpoint": "https://%s:5001/v1/events",\n  "device_id": "mu300",\n  "token_file": "/etc/fsd/upload-token"\n}\n' "$host" > client/event-upload.json
 chmod 600 client/event-upload.json
 printf 'Ready: MySQL 127.0.0.1 and %s port 13306; receiver 127.0.0.1:18080.\n' "$lan_ip"
 echo 'Device files: client/event-upload.json and client/upload-token. Keep them private.'

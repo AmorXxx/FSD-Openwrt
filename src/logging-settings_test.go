@@ -15,6 +15,28 @@ import (
 )
 
 func boolRef(v bool) *bool { return &v }
+func TestLoggingDefaultsOptIn(t *testing.T) {
+	for _, data := range []string{"", `{}`, `{"enabled":false}`, `{"enabled":true}`, `{"local_csv":true}`, `{"enabled":true,"local_csv":true}`} {
+		t.Run(data, func(t *testing.T) {
+			dir := t.TempDir()
+			if data != "" {
+				if err := os.WriteFile(filepath.Join(dir, "event-upload.json"), []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := readLoggingSettings(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.LocalCSV == nil || *cfg.LocalCSV != strings.Contains(data, `"local_csv":true`) || cfg.Enabled != strings.Contains(data, `"enabled":true`) {
+				t.Fatalf("unexpected switches: %+v", cfg)
+			}
+			if cfg.Endpoint != "" {
+				t.Fatal("default endpoint must be empty")
+			}
+		})
+	}
+}
 func TestLoggingIndependentSwitchesAndMigration(t *testing.T) {
 	app := &application{dir: t.TempDir()}
 	os.WriteFile(filepath.Join(app.dir, "event-upload.json"), []byte(`{"enabled":true,"endpoint":"https://example.com/v1/events","device_id":"test","token_file":"/missing"}`), 0600)

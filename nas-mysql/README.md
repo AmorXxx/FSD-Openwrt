@@ -64,7 +64,7 @@ curl -fsS https://你的域名:5001/healthz
 
 prepare.sh 生成两个私密文件：
 
-- client/event-upload.json：默认 enabled=true，endpoint=https://准备时填写的域名:5001/v1/events，device_id=mu300。
+- client/event-upload.json：默认 enabled=false、local_csv=false，endpoint=https://准备时填写的域名:5001/v1/events，device_id=mu300。
 - client/upload-token：设备上传凭据，与 NAS 的 secrets/upload_token.txt 相同。
 
 将它们安全复制到设备 `/etc/fsd/event-upload.json` 和 `/etc/fsd/upload-token`，权限均为 600，然后重启 fsd-service。先在接收服务和反向代理验证就绪后再启用；数据库密码和 CA 私钥不复制到设备。

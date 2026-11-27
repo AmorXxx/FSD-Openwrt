@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// Missing local_csv migrates the old mutually exclusive behavior once. Every
-// save writes an explicit flag, so disabling NAS never silently enables CSV.
+// Logging destinations are opt-in. Missing local_csv stays disabled; explicit
+// saved switches are preserved independently.
 func readLoggingSettings(dir string) (uploadSettings, error) {
 	cfg := uploadSettings{TokenFile: filepath.Join(dir, "upload-token")}
 	data, err := os.ReadFile(filepath.Join(dir, "event-upload.json"))
@@ -33,7 +33,7 @@ func readLoggingSettings(dir string) (uploadSettings, error) {
 		}
 	}
 	if cfg.LocalCSV == nil {
-		enabled := !cfg.Enabled
+		enabled := false
 		cfg.LocalCSV = &enabled
 	}
 	return cfg, nil
