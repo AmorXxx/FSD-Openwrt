@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fsd
-PKG_VERSION:=1.7.21
+PKG_VERSION:=1.7.22
 PKG_RELEASE:=1
 PKG_LICENSE:=LicenseRef-Unspecified
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
@@ -50,8 +50,8 @@ define Package/luci-app-fsd/install
 	$(INSTALL_BIN) ./files/luci/rpcd-fsd $(1)/usr/libexec/rpcd/fsd
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/fsd
 	$(INSTALL_DATA) ./files/luci/logging.js $(1)/www/luci-static/resources/view/fsd/logging-v2.js
-	$(INSTALL_DATA) ./files/luci/overview.js $(1)/www/luci-static/resources/view/fsd/overview-v16.js
-	$(INSTALL_DATA) ./files/luci/config-editor.js $(1)/www/luci-static/resources/view/fsd/config-editor-v13.js
+	$(INSTALL_DATA) ./files/luci/overview.js $(1)/www/luci-static/resources/view/fsd/overview-v17.js
+	$(INSTALL_DATA) ./files/luci/config-editor.js $(1)/www/luci-static/resources/view/fsd/config-editor-v14.js
 	$(INSTALL_DATA) ./files/luci/overview.css $(1)/www/luci-static/resources/view/fsd/overview.css
 	$(INSTALL_DIR) $(1)/usr/share/fsd/hooks
 	$(INSTALL_BIN) ./files/postinst ./files/prerm ./files/postrm $(1)/usr/share/fsd/hooks/

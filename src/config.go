@@ -31,10 +31,11 @@ type dnsRecord struct {
 }
 
 type siteConfig struct {
-	Routes      []customRoute `yaml:"h2_routes" json:"h2_routes"`
-	Domain      string        `yaml:"domain" json:"domain"`
-	Certificate string        `yaml:"cert,omitempty" json:"cert,omitempty"`
-	Key         string        `yaml:"key,omitempty" json:"key,omitempty"`
+	RequestClientCert bool          `yaml:"request_client_cert,omitempty" json:"request_client_cert"`
+	Routes            []customRoute `yaml:"h2_routes" json:"h2_routes"`
+	Domain            string        `yaml:"domain" json:"domain"`
+	Certificate       string        `yaml:"cert,omitempty" json:"cert,omitempty"`
+	Key               string        `yaml:"key,omitempty" json:"key,omitempty"`
 }
 
 type dnsBlacklist struct {

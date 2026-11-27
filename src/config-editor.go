@@ -83,17 +83,18 @@ type editorSnapshot struct {
 }
 
 type editableSite struct {
-	Domain      string          `json:"domain"`
-	Certificate string          `json:"cert"`
-	Key         string          `json:"key"`
-	Routes      []editableRoute `json:"h2_routes"`
+	RequestClientCert bool            `json:"request_client_cert"`
+	Domain            string          `json:"domain"`
+	Certificate       string          `json:"cert"`
+	Key               string          `json:"key"`
+	Routes            []editableRoute `json:"h2_routes"`
 }
 
 func snapshotForEditor(cfg config) editorSnapshot {
 	sections := editableSections(cfg)
 	sites := make([]editableSite, 0, len(cfg.Sites))
 	for _, site := range cfg.Sites {
-		out := editableSite{Domain: site.Domain, Certificate: site.Certificate, Key: site.Key, Routes: []editableRoute{}}
+		out := editableSite{RequestClientCert: site.RequestClientCert, Domain: site.Domain, Certificate: site.Certificate, Key: site.Key, Routes: []editableRoute{}}
 		for _, route := range site.Routes {
 			item := editableRoute{ResponseMode: route.ResponseMode, Path: route.Path, Fields: objectFields(route.JSON)}
 			if item.Fields == nil {
@@ -118,11 +119,12 @@ type editorUpdate struct {
 }
 
 type editorSiteUpdate struct {
-	Domain      string              `json:"domain"`
-	Certificate string              `json:"cert"`
-	Key         string              `json:"key"`
-	Source      string              `json:"source,omitempty"`
-	Routes      []editorRouteUpdate `json:"h2_routes"`
+	RequestClientCert bool                `json:"request_client_cert"`
+	Domain            string              `json:"domain"`
+	Certificate       string              `json:"cert"`
+	Key               string              `json:"key"`
+	Source            string              `json:"source,omitempty"`
+	Routes            []editorRouteUpdate `json:"h2_routes"`
 }
 
 func (input editorUpdate) updatedSites(previous []siteConfig) ([]siteConfig, error) {
@@ -149,7 +151,7 @@ func (input editorUpdate) updatedSites(previous []siteConfig) ([]siteConfig, err
 		if err != nil {
 			return nil, fmt.Errorf("站点 %s: %w", item.Domain, err)
 		}
-		sites = append(sites, siteConfig{Domain: item.Domain, Certificate: item.Certificate, Key: item.Key, Routes: routes})
+		sites = append(sites, siteConfig{RequestClientCert: item.RequestClientCert, Domain: item.Domain, Certificate: item.Certificate, Key: item.Key, Routes: routes})
 	}
 	return sites, nil
 }

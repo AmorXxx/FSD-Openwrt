@@ -3,7 +3,7 @@
 'require rpc';
 'require ui';
 'require poll';
-'require view.fsd.config-editor-v13 as configEditor';
+'require view.fsd.config-editor-v14 as configEditor';
 
 // Keep device-local wall time; hide the offset without converting to browser time.
 function deviceTime(value) {

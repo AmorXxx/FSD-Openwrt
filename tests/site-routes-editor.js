@@ -18,9 +18,12 @@ function E(tag,attrs,...kids){return new Node(tag,attrs||{},kids);}
  const initial={revision:'1',device_scope:{mode:'all',addresses:[]},dns_rules:[],h2_sites:[{domain:'b.a.com',cert:'',key:'',h2_routes:[{path:'/c',json:'{"n":9007199254740993}'}]},{domain:'h.g.com',cert:'',key:'',h2_routes:[{path:'/c',json:'{"n":2}'}]}]};
  let draft;const form=editor.create(initial,true,async text=>{draft=JSON.parse(text);return initial});
  let cards=form.node.querySelectorAll('.fsd-site-card');assert.equal(cards.length,2);assert.equal(cards[0].querySelectorAll('.fsd-route-card').length,1);
+ assert.equal(cards[0].querySelector('.fsd-site-client-cert').checked,false);
+ cards[0].querySelector('.fsd-site-client-cert').checked=true;
  cards[0].querySelector('.fsd-site-domain').value='renamed.a.com';
  // The first button in the editor is Save.
  await form.node.querySelectorAll('button')[0].listeners.click();
+ assert.equal(draft.h2_sites[0].request_client_cert,true);assert.equal(draft.h2_sites[1].request_client_cert,false);
  assert(draft);assert(!Object.hasOwn(draft,'h2_routes'));assert.equal(draft.h2_sites[0].source,'b.a.com');assert.equal(draft.h2_sites[0].domain,'renamed.a.com');assert.equal(draft.h2_sites[0].h2_routes[0].source,'/c');assert.equal(draft.h2_sites[1].h2_routes[0].source,'/c');
  cards=form.node.querySelectorAll('.fsd-site-card');const route=cards[1].querySelector('.fsd-route-card');const raw=route.querySelector('.fsd-json-raw');raw.value='{"n":9007199254740995}';form.node.listeners.input({target:raw});
  await form.node.querySelectorAll('button')[0].listeners.click();assert.equal(draft.h2_sites[1].h2_routes[0].json,'{"n":9007199254740995}');assert.equal(draft.h2_sites[0].h2_routes[0].source,'/c');

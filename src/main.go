@@ -701,7 +701,7 @@ func main() {
 		}
 		if endpoint.port == app.sitePort {
 			server.TLSConfig.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-				return keylogTLSConfig(server.TLSConfig, app.current.Load(), hello.Conn.RemoteAddr().String(), app.keylogs), nil
+				return siteTLSConfig(server.TLSConfig, app.current.Load(), hello, app.keylogs), nil
 			}
 			server.ConnContext = tracker.connection
 			server.ConnState = tracker.state

@@ -12,7 +12,7 @@ for manager,arch,want in [('apk','aarch64_generic','aarch64_generic'),('apk','aa
   else:scripts[manager]=f'if [ "$1" = print-architecture ]; then echo "arch all 1"; echo "arch {arch} 20"; else echo "INSTALL $*"; fi'
   for name,body in scripts.items():p=bin/name;p.write_text('#!/bin/sh\n'+body+'\n');p.chmod(0o755)
   for a in ['aarch64_generic','aarch64_cortex-a53']:
-   (d/'dist'/f'luci-app-fsd-1.7.16-r1_{a}.apk').touch();(d/'dist'/f'luci-app-fsd_1.7.16-1_{a}.ipk').touch()
+   (d/'dist'/f'luci-app-fsd-1.7.22-r1_{a}.apk').touch();(d/'dist'/f'luci-app-fsd_1.7.22-1_{a}.ipk').touch()
   result=subprocess.run(['/bin/sh',str(d/'install.sh')],env={**os.environ,'PATH':str(bin)},text=True,capture_output=True)
   if want: assert result.returncode==0 and 'INSTALL ' in result.stdout and want in result.stdout,(result.stdout,result.stderr)
   else: assert result.returncode!=0 and 'INSTALL ' not in result.stdout

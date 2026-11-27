@@ -113,6 +113,8 @@ return baseclass.extend({
 
         function siteRow(site) {
             var row=E('div',{'class':'fsd-site-card'});
+            var clientCert=E('input',{'type':'checkbox','class':'fsd-site-client-cert'});
+            clientCert.checked=!!site.request_client_cert;
             originalSites.set(row,site.domain||'');
             var routes=E('div',{'class':'fsd-form-list fsd-site-routes'});
             var addRoute=action(_('添加此站点接口'),function(){
@@ -122,6 +124,8 @@ return baseclass.extend({
             row.append(field(_('HTTPS 域名（支持 *.example.com）'),input('fsd-site-domain',site.domain,'*.example.com')),
                 field(_('证书链文件路径'),input('fsd-site-cert',site.cert||'','/etc/fsd/certs/fullchain.pem')),
                 field(_('私钥文件路径'),input('fsd-site-key',site.key||'','/etc/fsd/certs/privkey.pem')),
+                field(_('请求客户端证书（可选，不验证信任链）'),clientCert),
+                E('p',{},_('默认关闭。开启后客户端不提供证书也可握手；提供证书时仍须证明持有对应私钥。客户端仍会校验服务器证书。仅对新 TLS 连接生效。')),
                 E('div',{'class':'fsd-form-heading'},[E('h4',{},_('此站点的 HTTPS JSON 接口')),addRoute]),
                 E('p',{},_('接口仅对该站点生效。未匹配路径返回 404；空列表不响应任何 JSON 接口。精确站点未命中接口时不会回退到通配站点。')),
                 routes,remove(_('移除站点及其接口'),row,addSite));
@@ -238,6 +242,7 @@ return baseclass.extend({
  domain:row.querySelector('.fsd-site-domain').value.trim(),
  cert:row.querySelector('.fsd-site-cert').value.trim(),
  key:row.querySelector('.fsd-site-key').value.trim(),
+ request_client_cert:row.querySelector('.fsd-site-client-cert').checked,
  source:originalSites.get(row)||'',
  h2_routes:Array.from(row.querySelector('.fsd-site-routes').children,readRoute)
  };})
